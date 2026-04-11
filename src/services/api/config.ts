@@ -3,7 +3,7 @@
  */
 
 import { apiClient } from './client';
-import type { Config } from '@/types';
+import type { CodexWeeklyAutomationStatus, Config } from '@/types';
 import { normalizeConfigResponse } from './transformers';
 
 export const configApi = {
@@ -51,6 +51,50 @@ export const configApi = {
    */
   updateSwitchPreviewModel: (enabled: boolean) =>
     apiClient.put('/quota-exceeded/switch-preview-model', { value: enabled }),
+
+  /**
+   * Codex 周限自动检测开关
+   */
+  updateCodexWeeklyAutomationEnabled: (enabled: boolean) =>
+    apiClient.put('/codex-weekly-automation/enabled', { value: enabled }),
+
+  /**
+   * Codex 周限自动检测间隔
+   */
+  updateCodexWeeklyAutomationIntervalSeconds: (value: number) =>
+    apiClient.put('/codex-weekly-automation/interval-seconds', { value }),
+
+  /**
+   * 获取 Codex 周限自动检测状态
+   */
+  async getCodexWeeklyAutomationStatus(): Promise<CodexWeeklyAutomationStatus> {
+    const raw = await apiClient.get<Record<string, unknown>>('/codex-weekly-automation/status');
+    const lastCheckedAtRaw = raw?.['last_checked_at'] ?? raw?.lastCheckedAt;
+    const autoDisabledCountRaw = raw?.['auto_disabled_count'] ?? raw?.autoDisabledCount;
+
+    let autoDisabledCount = 0;
+    if (typeof autoDisabledCountRaw === 'number' && Number.isFinite(autoDisabledCountRaw)) {
+      autoDisabledCount = autoDisabledCountRaw;
+    } else if (
+      typeof autoDisabledCountRaw === 'string' &&
+      autoDisabledCountRaw.trim() !== ''
+    ) {
+      const parsed = Number(autoDisabledCountRaw);
+      if (Number.isFinite(parsed)) {
+        autoDisabledCount = parsed;
+      }
+    }
+
+    return {
+      enabled: Boolean(raw?.enabled),
+      running: Boolean(raw?.running),
+      lastCheckedAt:
+        typeof lastCheckedAtRaw === 'string' && lastCheckedAtRaw.trim() !== ''
+          ? lastCheckedAtRaw
+          : null,
+      autoDisabledCount,
+    };
+  },
 
   /**
    * 使用统计开关

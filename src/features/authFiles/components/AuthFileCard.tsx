@@ -42,6 +42,7 @@ export type AuthFileCardProps = {
   disableControls: boolean;
   deleting: string | null;
   statusUpdating: Record<string, boolean>;
+  codexWeeklyAutomationUpdating: Record<string, boolean>;
   quotaFilterType: QuotaProviderType | null;
   keyStats: KeyStats;
   statusBarCache: Map<string, AuthFileStatusBarData>;
@@ -50,6 +51,7 @@ export type AuthFileCardProps = {
   onOpenPrefixProxyEditor: (file: AuthFileItem) => void;
   onDelete: (name: string) => void;
   onToggleStatus: (file: AuthFileItem, enabled: boolean) => void;
+  onToggleCodexWeeklyAutomationExcluded: (file: AuthFileItem, excluded: boolean) => void;
   onToggleSelect: (name: string) => void;
 };
 
@@ -69,6 +71,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     disableControls,
     deleting,
     statusUpdating,
+    codexWeeklyAutomationUpdating,
     quotaFilterType,
     keyStats,
     statusBarCache,
@@ -77,6 +80,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     onOpenPrefixProxyEditor,
     onDelete,
     onToggleStatus,
+    onToggleCodexWeeklyAutomationExcluded,
     onToggleSelect,
   } = props;
 
@@ -92,6 +96,10 @@ export function AuthFileCard(props: AuthFileCardProps) {
     quotaFilterType && resolveQuotaType(file) === quotaFilterType ? quotaFilterType : null;
 
   const showQuotaLayout = Boolean(quotaType) && !isRuntimeOnly && !compact;
+  const isCodexAuth = String(file.type || file.provider || '').toLowerCase() === 'codex';
+  const codexWeeklyAutomationExcluded = Boolean(
+    file['codex_weekly_automation_excluded'] ?? file.codexWeeklyAutomationExcluded
+  );
 
   const providerCardClass =
     quotaType === 'antigravity'
@@ -310,16 +318,35 @@ export function AuthFileCard(props: AuthFileCardProps) {
               )}
             </div>
             {!isRuntimeOnly && (
-              <div className={styles.statusToggle}>
-                <span className={styles.statusToggleLabel}>
-                  {t('auth_files.status_toggle_label')}
-                </span>
-                <ToggleSwitch
-                  ariaLabel={t('auth_files.status_toggle_label')}
-                  checked={!file.disabled}
-                  disabled={disableControls || statusUpdating[file.name] === true}
-                  onChange={(value) => onToggleStatus(file, value)}
-                />
+              <div className={styles.cardToggleStack}>
+                <div className={styles.statusToggle}>
+                  <span className={styles.statusToggleLabel}>
+                    {t('auth_files.status_toggle_label')}
+                  </span>
+                  <ToggleSwitch
+                    ariaLabel={t('auth_files.status_toggle_label')}
+                    checked={!file.disabled}
+                    disabled={disableControls || statusUpdating[file.name] === true}
+                    onChange={(value) => onToggleStatus(file, value)}
+                  />
+                </div>
+                {isCodexAuth && (
+                  <div className={styles.statusToggle}>
+                    <span className={styles.statusToggleLabel}>
+                      {t('auth_files.codex_weekly_automation_excluded_label')}
+                    </span>
+                    <ToggleSwitch
+                      ariaLabel={t('auth_files.codex_weekly_automation_excluded_label')}
+                      checked={!codexWeeklyAutomationExcluded}
+                      disabled={
+                        disableControls || codexWeeklyAutomationUpdating[file.name] === true
+                      }
+                      onChange={(value) =>
+                        onToggleCodexWeeklyAutomationExcluded(file, !value)
+                      }
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

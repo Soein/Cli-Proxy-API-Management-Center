@@ -375,6 +375,26 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
     };
   }
 
+  const codexWeeklyAutomation =
+    raw['codex-weekly-automation'] ?? raw.codexWeeklyAutomation;
+  if (isRecord(codexWeeklyAutomation)) {
+    const nextConfig: NonNullable<Config['codexWeeklyAutomation']> = {};
+    nextConfig.enabled = normalizeBoolean(
+      codexWeeklyAutomation.enabled ?? codexWeeklyAutomation['enabled']
+    );
+    const intervalRaw =
+      codexWeeklyAutomation['interval-seconds'] ?? codexWeeklyAutomation.intervalSeconds;
+    if (typeof intervalRaw === 'number' && Number.isFinite(intervalRaw)) {
+      nextConfig.intervalSeconds = intervalRaw;
+    } else if (typeof intervalRaw === 'string' && intervalRaw.trim() !== '') {
+      const parsed = Number(intervalRaw);
+      if (Number.isFinite(parsed)) {
+        nextConfig.intervalSeconds = parsed;
+      }
+    }
+    config.codexWeeklyAutomation = nextConfig;
+  }
+
   config.usageStatisticsEnabled = normalizeBoolean(
     raw['usage-statistics-enabled'] ?? raw.usageStatisticsEnabled
   );

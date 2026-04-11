@@ -17,7 +17,9 @@ import { VisualConfigEditor } from '@/components/config/VisualConfigEditor';
 import { DiffModal } from '@/components/config/DiffModal';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useVisualConfig } from '@/hooks/useVisualConfig';
+import type { CodexWeeklyAutomationStatus } from '@/types';
 import { useNotificationStore, useAuthStore, useThemeStore, useConfigStore } from '@/stores';
+import { configApi } from '@/services/api';
 import { configFileApi } from '@/services/api/configFile';
 import styles from './ConfigPage.module.scss';
 
@@ -70,6 +72,11 @@ export function ConfigPage() {
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [serverYaml, setServerYaml] = useState('');
   const [mergedYaml, setMergedYaml] = useState('');
+  const [codexWeeklyAutomationStatus, setCodexWeeklyAutomationStatus] =
+    useState<CodexWeeklyAutomationStatus | null>(null);
+  const [codexWeeklyAutomationStatusLoading, setCodexWeeklyAutomationStatusLoading] =
+    useState(false);
+  const [codexWeeklyAutomationStatusError, setCodexWeeklyAutomationStatusError] = useState('');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,9 +115,29 @@ export function ConfigPage() {
     }
   }, [loadVisualValuesFromYaml, t]);
 
+  const loadCodexWeeklyAutomationStatus = useCallback(async () => {
+    if (connectionStatus !== 'connected') {
+      setCodexWeeklyAutomationStatus(null);
+      setCodexWeeklyAutomationStatusError('');
+      return;
+    }
+    setCodexWeeklyAutomationStatusLoading(true);
+    setCodexWeeklyAutomationStatusError('');
+    try {
+      const data = await configApi.getCodexWeeklyAutomationStatus();
+      setCodexWeeklyAutomationStatus(data);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('notification.refresh_failed');
+      setCodexWeeklyAutomationStatusError(message);
+    } finally {
+      setCodexWeeklyAutomationStatusLoading(false);
+    }
+  }, [connectionStatus, t]);
+
   useEffect(() => {
     loadConfig();
-  }, [loadConfig]);
+    void loadCodexWeeklyAutomationStatus();
+  }, [loadCodexWeeklyAutomationStatus, loadConfig]);
 
   useEffect(() => {
     if (activeTab !== 'visual' || !visualParseError) return;
@@ -138,6 +165,7 @@ export function ConfigPage() {
       setServerYaml(latestContent);
       setMergedYaml(latestContent);
       loadVisualValuesFromYaml(latestContent);
+      await loadCodexWeeklyAutomationStatus();
 
       // Keep the global config store in sync so sidebar / other pages reflect YAML changes immediately.
       try {
@@ -555,6 +583,9 @@ export function ConfigPage() {
               values={visualValues}
               validationErrors={visualValidationErrors}
               hasPayloadValidationErrors={visualHasPayloadValidationErrors}
+              codexWeeklyAutomationStatus={codexWeeklyAutomationStatus}
+              codexWeeklyAutomationStatusLoading={codexWeeklyAutomationStatusLoading}
+              codexWeeklyAutomationStatusError={codexWeeklyAutomationStatusError}
               disabled={disableControls || loading}
               onChange={setVisualValues}
             />

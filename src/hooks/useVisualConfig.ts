@@ -149,6 +149,9 @@ export function getVisualConfigValidationErrors(
     requestRetry: getNonNegativeIntegerError(values.requestRetry),
     maxRetryCredentials: getNonNegativeIntegerError(values.maxRetryCredentials),
     maxRetryInterval: getNonNegativeIntegerError(values.maxRetryInterval),
+    codexWeeklyAutomationIntervalSeconds: getNonNegativeIntegerError(
+      values.codexWeeklyAutomationIntervalSeconds
+    ),
     'streaming.keepaliveSeconds': getNonNegativeIntegerError(values.streaming.keepaliveSeconds),
     'streaming.bootstrapRetries': getNonNegativeIntegerError(values.streaming.bootstrapRetries),
     'streaming.nonstreamKeepaliveInterval': getNonNegativeIntegerError(
@@ -653,6 +656,19 @@ function getNextDirtyFields(
       nextValues.quotaAntigravityCredits === baselineValues.quotaAntigravityCredits
     );
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'codexWeeklyAutomationEnabled')) {
+    updateDirty(
+      'codexWeeklyAutomationEnabled',
+      nextValues.codexWeeklyAutomationEnabled === baselineValues.codexWeeklyAutomationEnabled
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'codexWeeklyAutomationIntervalSeconds')) {
+    updateDirty(
+      'codexWeeklyAutomationIntervalSeconds',
+      nextValues.codexWeeklyAutomationIntervalSeconds ===
+        baselineValues.codexWeeklyAutomationIntervalSeconds
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'routingStrategy')) {
     updateDirty('routingStrategy', nextValues.routingStrategy === baselineValues.routingStrategy);
   }
@@ -790,6 +806,7 @@ export function useVisualConfig() {
       const tls = asRecord(parsed.tls);
       const remoteManagement = asRecord(parsed['remote-management']);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
+      const codexWeeklyAutomation = asRecord(parsed['codex-weekly-automation']);
       const routing = asRecord(parsed.routing);
       const payload = asRecord(parsed.payload);
       const streaming = asRecord(parsed.streaming);
@@ -834,6 +851,10 @@ export function useVisualConfig() {
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? true),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? true),
         quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? true),
+        codexWeeklyAutomationEnabled: Boolean(codexWeeklyAutomation?.enabled ?? false),
+        codexWeeklyAutomationIntervalSeconds: String(
+          codexWeeklyAutomation?.['interval-seconds'] ?? 300
+        ),
 
         routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
 
@@ -947,6 +968,25 @@ export function useVisualConfig() {
             values.quotaAntigravityCredits
           );
           deleteIfMapEmpty(doc, ['quota-exceeded']);
+        }
+
+        if (
+          docHas(doc, ['codex-weekly-automation']) ||
+          values.codexWeeklyAutomationEnabled ||
+          values.codexWeeklyAutomationIntervalSeconds.trim() !== '300'
+        ) {
+          ensureMapInDoc(doc, ['codex-weekly-automation']);
+          setBooleanInDoc(
+            doc,
+            ['codex-weekly-automation', 'enabled'],
+            values.codexWeeklyAutomationEnabled
+          );
+          setIntFromStringInDoc(
+            doc,
+            ['codex-weekly-automation', 'interval-seconds'],
+            values.codexWeeklyAutomationIntervalSeconds
+          );
+          deleteIfMapEmpty(doc, ['codex-weekly-automation']);
         }
 
         if (docHas(doc, ['routing']) || values.routingStrategy !== 'round-robin') {

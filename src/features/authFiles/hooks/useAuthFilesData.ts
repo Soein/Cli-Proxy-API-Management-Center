@@ -30,6 +30,7 @@ export type UseAuthFilesDataResult = {
   deleting: string | null;
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
+  codexWeeklyAutomationUpdating: Record<string, boolean>;
   batchStatusUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   loadFiles: () => Promise<void>;
@@ -39,6 +40,10 @@ export type UseAuthFilesDataResult = {
   handleDeleteAll: (options: DeleteAllOptions) => void;
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
+  handleCodexWeeklyAutomationExcludedToggle: (
+    item: AuthFileItem,
+    excluded: boolean
+  ) => Promise<void>;
   toggleSelect: (name: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -64,6 +69,9 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
+  const [codexWeeklyAutomationUpdating, setCodexWeeklyAutomationUpdating] = useState<
+    Record<string, boolean>
+  >({});
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
@@ -435,6 +443,60 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [showNotification, t]
   );
 
+  const handleCodexWeeklyAutomationExcludedToggle = useCallback(
+    async (item: AuthFileItem, excluded: boolean) => {
+      const name = item.name;
+      const previousExcluded = Boolean(
+        item['codex_weekly_automation_excluded'] ?? item.codexWeeklyAutomationExcluded
+      );
+
+      setCodexWeeklyAutomationUpdating((prev) => ({ ...prev, [name]: true }));
+      setFiles((prev) =>
+        prev.map((file) =>
+          file.name === name
+            ? {
+                ...file,
+                codexWeeklyAutomationExcluded: excluded,
+                ['codex_weekly_automation_excluded']: excluded,
+              }
+            : file
+        )
+      );
+
+      try {
+        await authFilesApi.setCodexWeeklyAutomationExcluded(name, excluded);
+        showNotification(
+          excluded
+            ? t('auth_files.codex_weekly_automation_excluded_enabled', { name })
+            : t('auth_files.codex_weekly_automation_excluded_disabled', { name }),
+          'success'
+        );
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : '';
+        setFiles((prev) =>
+          prev.map((file) =>
+            file.name === name
+              ? {
+                  ...file,
+                  codexWeeklyAutomationExcluded: previousExcluded,
+                  ['codex_weekly_automation_excluded']: previousExcluded,
+                }
+              : file
+          )
+        );
+        showNotification(`${t('notification.update_failed')}: ${errorMessage}`, 'error');
+      } finally {
+        setCodexWeeklyAutomationUpdating((prev) => {
+          if (!prev[name]) return prev;
+          const next = { ...prev };
+          delete next[name];
+          return next;
+        });
+      }
+    },
+    [showNotification, t]
+  );
+
   const batchSetStatus = useCallback(
     async (names: string[], enabled: boolean) => {
       if (batchStatusPendingRef.current) return;
@@ -614,6 +676,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     deleting,
     deletingAll,
     statusUpdating,
+    codexWeeklyAutomationUpdating,
     batchStatusUpdating,
     fileInputRef,
     loadFiles,
@@ -623,6 +686,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
+    handleCodexWeeklyAutomationExcludedToggle,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,

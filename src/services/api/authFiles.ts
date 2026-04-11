@@ -8,6 +8,7 @@ import type { OAuthModelAliasEntry } from '@/types';
 
 type StatusError = { status?: number };
 type AuthFileStatusResponse = { status: string; disabled: boolean };
+type AuthFileFieldsResponse = { status: string };
 type AuthFileEntry = AuthFilesResponse['files'][number];
 type AuthFileBatchFailure = { name: string; error: string };
 type AuthFileBatchUploadResponse = {
@@ -399,6 +400,12 @@ export const authFilesApi = {
 
   setStatus: (name: string, disabled: boolean) =>
     apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),
+
+  setCodexWeeklyAutomationExcluded: (name: string, excluded: boolean) =>
+    apiClient.patch<AuthFileFieldsResponse>('/auth-files/fields', {
+      name,
+      codex_weekly_automation_excluded: excluded,
+    }),
 
   uploadFiles: async (files: File[]): Promise<AuthFileBatchUploadResult> => {
     const requestedNames = files.map((file) => file.name);

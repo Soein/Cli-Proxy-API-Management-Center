@@ -12,11 +12,24 @@ export interface QuotaExceededConfig {
   antigravityCredits?: boolean;
 }
 
+export interface CodexWeeklyAutomationConfig {
+  enabled?: boolean;
+  intervalSeconds?: number;
+}
+
+export interface CodexWeeklyAutomationStatus {
+  enabled?: boolean;
+  running?: boolean;
+  lastCheckedAt?: string | null;
+  autoDisabledCount?: number;
+}
+
 export interface Config {
   debug?: boolean;
   proxyUrl?: string;
   requestRetry?: number;
   quotaExceeded?: QuotaExceededConfig;
+  codexWeeklyAutomation?: CodexWeeklyAutomationConfig;
   usageStatisticsEnabled?: boolean;
   requestLog?: boolean;
   loggingToFile?: boolean;
@@ -40,6 +53,7 @@ export type RawConfigSection =
   | 'proxy-url'
   | 'request-retry'
   | 'quota-exceeded'
+  | 'codex-weekly-automation'
   | 'usage-statistics-enabled'
   | 'request-log'
   | 'logging-to-file'

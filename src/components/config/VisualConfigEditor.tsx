@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/icons';
 import { ConfigSection } from '@/components/config/ConfigSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import type { CodexWeeklyAutomationStatus } from '@/types';
 import type {
   PayloadFilterRule,
   PayloadParamValidationErrorCode,
@@ -67,6 +68,9 @@ interface VisualConfigEditorProps {
   values: VisualConfigValues;
   validationErrors?: VisualConfigValidationErrors;
   hasPayloadValidationErrors?: boolean;
+  codexWeeklyAutomationStatus?: CodexWeeklyAutomationStatus | null;
+  codexWeeklyAutomationStatusLoading?: boolean;
+  codexWeeklyAutomationStatusError?: string;
   disabled?: boolean;
   onChange: (values: Partial<VisualConfigValues>) => void;
 }
@@ -174,6 +178,9 @@ export function VisualConfigEditor({
   values,
   validationErrors,
   hasPayloadValidationErrors = false,
+  codexWeeklyAutomationStatus = null,
+  codexWeeklyAutomationStatusLoading = false,
+  codexWeeklyAutomationStatusError,
   disabled = false,
   onChange,
 }: VisualConfigEditorProps) {
@@ -185,6 +192,9 @@ export function VisualConfigEditor({
   const shouldRenderFloatingSidebar = !isMobile && isFloatingSidebar && isCurrentLayer;
   const routingStrategyLabelId = useId();
   const routingStrategyHintId = `${routingStrategyLabelId}-hint`;
+  const codexWeeklyAutomationIntervalId = useId();
+  const codexWeeklyAutomationIntervalHintId = `${codexWeeklyAutomationIntervalId}-hint`;
+  const codexWeeklyAutomationIntervalErrorId = `${codexWeeklyAutomationIntervalId}-error`;
   const keepaliveInputId = useId();
   const keepaliveHintId = `${keepaliveInputId}-hint`;
   const keepaliveErrorId = `${keepaliveInputId}-error`;
@@ -212,6 +222,10 @@ export function VisualConfigEditor({
   const requestRetryError = getValidationMessage(t, validationErrors?.requestRetry);
   const maxRetryCredentialsError = getValidationMessage(t, validationErrors?.maxRetryCredentials);
   const maxRetryIntervalError = getValidationMessage(t, validationErrors?.maxRetryInterval);
+  const codexWeeklyAutomationIntervalError = getValidationMessage(
+    t,
+    validationErrors?.codexWeeklyAutomationIntervalSeconds
+  );
   const keepaliveError = getValidationMessage(t, validationErrors?.['streaming.keepaliveSeconds']);
   const bootstrapRetriesError = getValidationMessage(
     t,
@@ -221,6 +235,16 @@ export function VisualConfigEditor({
     t,
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
   );
+  const formattedLastCheckedAt = useMemo(() => {
+    if (!codexWeeklyAutomationStatus?.lastCheckedAt) {
+      return t('config_management.visual.sections.quota.codex_weekly_status_waiting');
+    }
+    const parsed = new Date(codexWeeklyAutomationStatus.lastCheckedAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return codexWeeklyAutomationStatus.lastCheckedAt;
+    }
+    return parsed.toLocaleString();
+  }, [codexWeeklyAutomationStatus?.lastCheckedAt, t]);
 
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
@@ -302,7 +326,7 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.quota.title'),
         description: t('config_management.visual.sections.quota.description'),
         icon: IconTimer,
-        errorCount: 0,
+        errorCount: countErrors(['codexWeeklyAutomationIntervalSeconds']),
       },
       {
         id: 'streaming',
@@ -921,31 +945,103 @@ export function VisualConfigEditor({
             title={t('config_management.visual.sections.quota.title')}
             description={t('config_management.visual.sections.quota.description')}
           >
-            <SectionGrid>
-              <ToggleRow
-                title={t('config_management.visual.sections.quota.switch_project')}
-                description={t('config_management.visual.sections.quota.switch_project_desc')}
-                checked={values.quotaSwitchProject}
-                disabled={disabled}
-                onChange={(quotaSwitchProject) => onChange({ quotaSwitchProject })}
-              />
-              <ToggleRow
-                title={t('config_management.visual.sections.quota.switch_preview_model')}
-                description={t('config_management.visual.sections.quota.switch_preview_model_desc')}
-                checked={values.quotaSwitchPreviewModel}
-                disabled={disabled}
-                onChange={(quotaSwitchPreviewModel) => onChange({ quotaSwitchPreviewModel })}
-              />
-              <ToggleRow
-                title={t('config_management.visual.sections.quota.antigravity_credits')}
-                description={t(
-                  'config_management.visual.sections.quota.antigravity_credits_desc'
-                )}
-                checked={values.quotaAntigravityCredits}
-                disabled={disabled}
-                onChange={(quotaAntigravityCredits) => onChange({ quotaAntigravityCredits })}
-              />
-            </SectionGrid>
+            <SectionStack>
+              <SectionGrid>
+                <ToggleRow
+                  title={t('config_management.visual.sections.quota.switch_project')}
+                  description={t('config_management.visual.sections.quota.switch_project_desc')}
+                  checked={values.quotaSwitchProject}
+                  disabled={disabled}
+                  onChange={(quotaSwitchProject) => onChange({ quotaSwitchProject })}
+                />
+                <ToggleRow
+                  title={t('config_management.visual.sections.quota.switch_preview_model')}
+                  description={t('config_management.visual.sections.quota.switch_preview_model_desc')}
+                  checked={values.quotaSwitchPreviewModel}
+                  disabled={disabled}
+                  onChange={(quotaSwitchPreviewModel) => onChange({ quotaSwitchPreviewModel })}
+                />
+                <ToggleRow
+                  title={t('config_management.visual.sections.quota.antigravity_credits')}
+                  description={t('config_management.visual.sections.quota.antigravity_credits_desc')}
+                  checked={values.quotaAntigravityCredits}
+                  disabled={disabled}
+                  onChange={(quotaAntigravityCredits) => onChange({ quotaAntigravityCredits })}
+                />
+              </SectionGrid>
+
+              <SectionSubsection
+                title={t('config_management.visual.sections.quota.codex_weekly_title')}
+                description={t('config_management.visual.sections.quota.codex_weekly_desc')}
+              >
+                <SectionGrid>
+                  <ToggleRow
+                    title={t('config_management.visual.sections.quota.codex_weekly_enabled')}
+                    description={t('config_management.visual.sections.quota.codex_weekly_enabled_desc')}
+                    checked={values.codexWeeklyAutomationEnabled}
+                    disabled={disabled}
+                    onChange={(codexWeeklyAutomationEnabled) =>
+                      onChange({ codexWeeklyAutomationEnabled })
+                    }
+                  />
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_weekly_interval')}
+                    htmlFor={codexWeeklyAutomationIntervalId}
+                    hint={t('config_management.visual.sections.quota.codex_weekly_interval_desc')}
+                    hintId={codexWeeklyAutomationIntervalHintId}
+                    error={codexWeeklyAutomationIntervalError}
+                    errorId={codexWeeklyAutomationIntervalErrorId}
+                  >
+                    <div className={styles.fieldControl}>
+                      <input
+                        id={codexWeeklyAutomationIntervalId}
+                        className="input"
+                        type="number"
+                        placeholder="300"
+                        value={values.codexWeeklyAutomationIntervalSeconds}
+                        onChange={(e) =>
+                          onChange({
+                            codexWeeklyAutomationIntervalSeconds: e.target.value,
+                          })
+                        }
+                        disabled={disabled}
+                      />
+                    </div>
+                  </FieldShell>
+                </SectionGrid>
+
+                <SectionGrid>
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_weekly_status')}
+                  >
+                    <div className={styles.toggleTitle}>
+                      {codexWeeklyAutomationStatusLoading
+                        ? t('config_management.visual.sections.quota.codex_weekly_status_loading')
+                        : codexWeeklyAutomationStatus?.running
+                          ? t('config_management.visual.sections.quota.codex_weekly_status_running')
+                          : codexWeeklyAutomationStatus?.enabled
+                            ? t('config_management.visual.sections.quota.codex_weekly_status_idle')
+                            : t('config_management.visual.sections.quota.codex_weekly_status_disabled')}
+                    </div>
+                    {codexWeeklyAutomationStatusError ? (
+                      <div className={styles.toggleDescription}>{codexWeeklyAutomationStatusError}</div>
+                    ) : null}
+                  </FieldShell>
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_weekly_last_checked')}
+                  >
+                    <div className={styles.toggleTitle}>{formattedLastCheckedAt}</div>
+                  </FieldShell>
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_weekly_auto_disabled_count')}
+                  >
+                    <div className={styles.toggleTitle}>
+                      {codexWeeklyAutomationStatus?.autoDisabledCount ?? 0}
+                    </div>
+                  </FieldShell>
+                </SectionGrid>
+              </SectionSubsection>
+            </SectionStack>
           </ConfigSection>
 
           <ConfigSection
