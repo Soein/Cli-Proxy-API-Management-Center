@@ -17,7 +17,7 @@ import { VisualConfigEditor } from '@/components/config/VisualConfigEditor';
 import { DiffModal } from '@/components/config/DiffModal';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useVisualConfig } from '@/hooks/useVisualConfig';
-import type { CodexWeeklyAutomationStatus } from '@/types';
+import type { CodexHourlyAutomationStatus, CodexWeeklyAutomationStatus } from '@/types';
 import { useNotificationStore, useAuthStore, useThemeStore, useConfigStore } from '@/stores';
 import { configApi } from '@/services/api';
 import { configFileApi } from '@/services/api/configFile';
@@ -77,6 +77,11 @@ export function ConfigPage() {
   const [codexWeeklyAutomationStatusLoading, setCodexWeeklyAutomationStatusLoading] =
     useState(false);
   const [codexWeeklyAutomationStatusError, setCodexWeeklyAutomationStatusError] = useState('');
+  const [codexHourlyAutomationStatus, setCodexHourlyAutomationStatus] =
+    useState<CodexHourlyAutomationStatus | null>(null);
+  const [codexHourlyAutomationStatusLoading, setCodexHourlyAutomationStatusLoading] =
+    useState(false);
+  const [codexHourlyAutomationStatusError, setCodexHourlyAutomationStatusError] = useState('');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,10 +139,30 @@ export function ConfigPage() {
     }
   }, [connectionStatus, t]);
 
+  const loadCodexHourlyAutomationStatus = useCallback(async () => {
+    if (connectionStatus !== 'connected') {
+      setCodexHourlyAutomationStatus(null);
+      setCodexHourlyAutomationStatusError('');
+      return;
+    }
+    setCodexHourlyAutomationStatusLoading(true);
+    setCodexHourlyAutomationStatusError('');
+    try {
+      const data = await configApi.getCodexHourlyAutomationStatus();
+      setCodexHourlyAutomationStatus(data);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('notification.refresh_failed');
+      setCodexHourlyAutomationStatusError(message);
+    } finally {
+      setCodexHourlyAutomationStatusLoading(false);
+    }
+  }, [connectionStatus, t]);
+
   useEffect(() => {
     loadConfig();
     void loadCodexWeeklyAutomationStatus();
-  }, [loadCodexWeeklyAutomationStatus, loadConfig]);
+    void loadCodexHourlyAutomationStatus();
+  }, [loadCodexHourlyAutomationStatus, loadCodexWeeklyAutomationStatus, loadConfig]);
 
   useEffect(() => {
     if (activeTab !== 'visual' || !visualParseError) return;
@@ -166,6 +191,7 @@ export function ConfigPage() {
       setMergedYaml(latestContent);
       loadVisualValuesFromYaml(latestContent);
       await loadCodexWeeklyAutomationStatus();
+      await loadCodexHourlyAutomationStatus();
 
       // Keep the global config store in sync so sidebar / other pages reflect YAML changes immediately.
       try {
@@ -586,6 +612,9 @@ export function ConfigPage() {
               codexWeeklyAutomationStatus={codexWeeklyAutomationStatus}
               codexWeeklyAutomationStatusLoading={codexWeeklyAutomationStatusLoading}
               codexWeeklyAutomationStatusError={codexWeeklyAutomationStatusError}
+              codexHourlyAutomationStatus={codexHourlyAutomationStatus}
+              codexHourlyAutomationStatusLoading={codexHourlyAutomationStatusLoading}
+              codexHourlyAutomationStatusError={codexHourlyAutomationStatusError}
               disabled={disableControls || loading}
               onChange={setVisualValues}
             />

@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/icons';
 import { ConfigSection } from '@/components/config/ConfigSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import type { CodexWeeklyAutomationStatus } from '@/types';
+import type { CodexHourlyAutomationStatus, CodexWeeklyAutomationStatus } from '@/types';
 import type {
   PayloadFilterRule,
   PayloadParamValidationErrorCode,
@@ -71,6 +71,9 @@ interface VisualConfigEditorProps {
   codexWeeklyAutomationStatus?: CodexWeeklyAutomationStatus | null;
   codexWeeklyAutomationStatusLoading?: boolean;
   codexWeeklyAutomationStatusError?: string;
+  codexHourlyAutomationStatus?: CodexHourlyAutomationStatus | null;
+  codexHourlyAutomationStatusLoading?: boolean;
+  codexHourlyAutomationStatusError?: string;
   disabled?: boolean;
   onChange: (values: Partial<VisualConfigValues>) => void;
 }
@@ -181,6 +184,9 @@ export function VisualConfigEditor({
   codexWeeklyAutomationStatus = null,
   codexWeeklyAutomationStatusLoading = false,
   codexWeeklyAutomationStatusError,
+  codexHourlyAutomationStatus = null,
+  codexHourlyAutomationStatusLoading = false,
+  codexHourlyAutomationStatusError,
   disabled = false,
   onChange,
 }: VisualConfigEditorProps) {
@@ -195,6 +201,9 @@ export function VisualConfigEditor({
   const codexWeeklyAutomationIntervalId = useId();
   const codexWeeklyAutomationIntervalHintId = `${codexWeeklyAutomationIntervalId}-hint`;
   const codexWeeklyAutomationIntervalErrorId = `${codexWeeklyAutomationIntervalId}-error`;
+  const codexHourlyAutomationIntervalId = useId();
+  const codexHourlyAutomationIntervalHintId = `${codexHourlyAutomationIntervalId}-hint`;
+  const codexHourlyAutomationIntervalErrorId = `${codexHourlyAutomationIntervalId}-error`;
   const keepaliveInputId = useId();
   const keepaliveHintId = `${keepaliveInputId}-hint`;
   const keepaliveErrorId = `${keepaliveInputId}-error`;
@@ -226,6 +235,10 @@ export function VisualConfigEditor({
     t,
     validationErrors?.codexWeeklyAutomationIntervalSeconds
   );
+  const codexHourlyAutomationIntervalError = getValidationMessage(
+    t,
+    validationErrors?.codexHourlyAutomationIntervalSeconds
+  );
   const keepaliveError = getValidationMessage(t, validationErrors?.['streaming.keepaliveSeconds']);
   const bootstrapRetriesError = getValidationMessage(
     t,
@@ -244,7 +257,17 @@ export function VisualConfigEditor({
       return codexWeeklyAutomationStatus.lastCheckedAt;
     }
     return parsed.toLocaleString();
-  }, [codexWeeklyAutomationStatus?.lastCheckedAt, t]);
+  }, [codexWeeklyAutomationStatus, t]);
+  const formattedHourlyLastCheckedAt = useMemo(() => {
+    if (!codexHourlyAutomationStatus?.lastCheckedAt) {
+      return t('config_management.visual.sections.quota.codex_hourly_status_waiting');
+    }
+    const parsed = new Date(codexHourlyAutomationStatus.lastCheckedAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return codexHourlyAutomationStatus.lastCheckedAt;
+    }
+    return parsed.toLocaleString();
+  }, [codexHourlyAutomationStatus, t]);
 
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
@@ -326,7 +349,10 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.quota.title'),
         description: t('config_management.visual.sections.quota.description'),
         icon: IconTimer,
-        errorCount: countErrors(['codexWeeklyAutomationIntervalSeconds']),
+        errorCount: countErrors([
+          'codexWeeklyAutomationIntervalSeconds',
+          'codexHourlyAutomationIntervalSeconds',
+        ]),
       },
       {
         id: 'streaming',
@@ -464,7 +490,8 @@ export function VisualConfigEditor({
         220
       );
       const maxHeight = Math.max(window.innerHeight - top - viewportPadding, 160);
-      const isVisible = workspaceRect.bottom > stickyTop + 24 && anchorRect.top < window.innerHeight;
+      const isVisible =
+        workspaceRect.bottom > stickyTop + 24 && anchorRect.top < window.innerHeight;
 
       floatingElement.style.transform = `translate3d(${left}px, ${top}px, 0)`;
       floatingElement.style.width = `${width}px`;
@@ -956,14 +983,18 @@ export function VisualConfigEditor({
                 />
                 <ToggleRow
                   title={t('config_management.visual.sections.quota.switch_preview_model')}
-                  description={t('config_management.visual.sections.quota.switch_preview_model_desc')}
+                  description={t(
+                    'config_management.visual.sections.quota.switch_preview_model_desc'
+                  )}
                   checked={values.quotaSwitchPreviewModel}
                   disabled={disabled}
                   onChange={(quotaSwitchPreviewModel) => onChange({ quotaSwitchPreviewModel })}
                 />
                 <ToggleRow
                   title={t('config_management.visual.sections.quota.antigravity_credits')}
-                  description={t('config_management.visual.sections.quota.antigravity_credits_desc')}
+                  description={t(
+                    'config_management.visual.sections.quota.antigravity_credits_desc'
+                  )}
                   checked={values.quotaAntigravityCredits}
                   disabled={disabled}
                   onChange={(quotaAntigravityCredits) => onChange({ quotaAntigravityCredits })}
@@ -977,7 +1008,9 @@ export function VisualConfigEditor({
                 <SectionGrid>
                   <ToggleRow
                     title={t('config_management.visual.sections.quota.codex_weekly_enabled')}
-                    description={t('config_management.visual.sections.quota.codex_weekly_enabled_desc')}
+                    description={t(
+                      'config_management.visual.sections.quota.codex_weekly_enabled_desc'
+                    )}
                     checked={values.codexWeeklyAutomationEnabled}
                     disabled={disabled}
                     onChange={(codexWeeklyAutomationEnabled) =>
@@ -1021,10 +1054,14 @@ export function VisualConfigEditor({
                           ? t('config_management.visual.sections.quota.codex_weekly_status_running')
                           : codexWeeklyAutomationStatus?.enabled
                             ? t('config_management.visual.sections.quota.codex_weekly_status_idle')
-                            : t('config_management.visual.sections.quota.codex_weekly_status_disabled')}
+                            : t(
+                                'config_management.visual.sections.quota.codex_weekly_status_disabled'
+                              )}
                     </div>
                     {codexWeeklyAutomationStatusError ? (
-                      <div className={styles.toggleDescription}>{codexWeeklyAutomationStatusError}</div>
+                      <div className={styles.toggleDescription}>
+                        {codexWeeklyAutomationStatusError}
+                      </div>
                     ) : null}
                   </FieldShell>
                   <FieldShell
@@ -1033,10 +1070,92 @@ export function VisualConfigEditor({
                     <div className={styles.toggleTitle}>{formattedLastCheckedAt}</div>
                   </FieldShell>
                   <FieldShell
-                    label={t('config_management.visual.sections.quota.codex_weekly_auto_disabled_count')}
+                    label={t(
+                      'config_management.visual.sections.quota.codex_weekly_auto_disabled_count'
+                    )}
                   >
                     <div className={styles.toggleTitle}>
                       {codexWeeklyAutomationStatus?.autoDisabledCount ?? 0}
+                    </div>
+                  </FieldShell>
+                </SectionGrid>
+              </SectionSubsection>
+
+              <SectionSubsection
+                title={t('config_management.visual.sections.quota.codex_hourly_title')}
+                description={t('config_management.visual.sections.quota.codex_hourly_desc')}
+              >
+                <SectionGrid>
+                  <ToggleRow
+                    title={t('config_management.visual.sections.quota.codex_hourly_enabled')}
+                    description={t(
+                      'config_management.visual.sections.quota.codex_hourly_enabled_desc'
+                    )}
+                    checked={values.codexHourlyAutomationEnabled}
+                    disabled={disabled}
+                    onChange={(codexHourlyAutomationEnabled) =>
+                      onChange({ codexHourlyAutomationEnabled })
+                    }
+                  />
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_hourly_interval')}
+                    htmlFor={codexHourlyAutomationIntervalId}
+                    hint={t('config_management.visual.sections.quota.codex_hourly_interval_desc')}
+                    hintId={codexHourlyAutomationIntervalHintId}
+                    error={codexHourlyAutomationIntervalError}
+                    errorId={codexHourlyAutomationIntervalErrorId}
+                  >
+                    <div className={styles.fieldControl}>
+                      <input
+                        id={codexHourlyAutomationIntervalId}
+                        className="input"
+                        type="number"
+                        placeholder="300"
+                        value={values.codexHourlyAutomationIntervalSeconds}
+                        onChange={(e) =>
+                          onChange({
+                            codexHourlyAutomationIntervalSeconds: e.target.value,
+                          })
+                        }
+                        disabled={disabled}
+                      />
+                    </div>
+                  </FieldShell>
+                </SectionGrid>
+
+                <SectionGrid>
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_hourly_status')}
+                  >
+                    <div className={styles.toggleTitle}>
+                      {codexHourlyAutomationStatusLoading
+                        ? t('config_management.visual.sections.quota.codex_hourly_status_loading')
+                        : codexHourlyAutomationStatus?.running
+                          ? t('config_management.visual.sections.quota.codex_hourly_status_running')
+                          : codexHourlyAutomationStatus?.enabled
+                            ? t('config_management.visual.sections.quota.codex_hourly_status_idle')
+                            : t(
+                                'config_management.visual.sections.quota.codex_hourly_status_disabled'
+                              )}
+                    </div>
+                    {codexHourlyAutomationStatusError ? (
+                      <div className={styles.toggleDescription}>
+                        {codexHourlyAutomationStatusError}
+                      </div>
+                    ) : null}
+                  </FieldShell>
+                  <FieldShell
+                    label={t('config_management.visual.sections.quota.codex_hourly_last_checked')}
+                  >
+                    <div className={styles.toggleTitle}>{formattedHourlyLastCheckedAt}</div>
+                  </FieldShell>
+                  <FieldShell
+                    label={t(
+                      'config_management.visual.sections.quota.codex_hourly_auto_disabled_count'
+                    )}
+                  >
+                    <div className={styles.toggleTitle}>
+                      {codexHourlyAutomationStatus?.autoDisabledCount ?? 0}
                     </div>
                   </FieldShell>
                 </SectionGrid>

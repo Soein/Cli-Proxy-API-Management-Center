@@ -152,6 +152,9 @@ export function getVisualConfigValidationErrors(
     codexWeeklyAutomationIntervalSeconds: getNonNegativeIntegerError(
       values.codexWeeklyAutomationIntervalSeconds
     ),
+    codexHourlyAutomationIntervalSeconds: getNonNegativeIntegerError(
+      values.codexHourlyAutomationIntervalSeconds
+    ),
     'streaming.keepaliveSeconds': getNonNegativeIntegerError(values.streaming.keepaliveSeconds),
     'streaming.bootstrapRetries': getNonNegativeIntegerError(values.streaming.bootstrapRetries),
     'streaming.nonstreamKeepaliveInterval': getNonNegativeIntegerError(
@@ -669,6 +672,19 @@ function getNextDirtyFields(
         baselineValues.codexWeeklyAutomationIntervalSeconds
     );
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'codexHourlyAutomationEnabled')) {
+    updateDirty(
+      'codexHourlyAutomationEnabled',
+      nextValues.codexHourlyAutomationEnabled === baselineValues.codexHourlyAutomationEnabled
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'codexHourlyAutomationIntervalSeconds')) {
+    updateDirty(
+      'codexHourlyAutomationIntervalSeconds',
+      nextValues.codexHourlyAutomationIntervalSeconds ===
+        baselineValues.codexHourlyAutomationIntervalSeconds
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'routingStrategy')) {
     updateDirty('routingStrategy', nextValues.routingStrategy === baselineValues.routingStrategy);
   }
@@ -807,6 +823,7 @@ export function useVisualConfig() {
       const remoteManagement = asRecord(parsed['remote-management']);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
       const codexWeeklyAutomation = asRecord(parsed['codex-weekly-automation']);
+      const codexHourlyAutomation = asRecord(parsed['codex-hourly-automation']);
       const routing = asRecord(parsed.routing);
       const payload = asRecord(parsed.payload);
       const streaming = asRecord(parsed.streaming);
@@ -854,6 +871,10 @@ export function useVisualConfig() {
         codexWeeklyAutomationEnabled: Boolean(codexWeeklyAutomation?.enabled ?? false),
         codexWeeklyAutomationIntervalSeconds: String(
           codexWeeklyAutomation?.['interval-seconds'] ?? 300
+        ),
+        codexHourlyAutomationEnabled: Boolean(codexHourlyAutomation?.enabled ?? false),
+        codexHourlyAutomationIntervalSeconds: String(
+          codexHourlyAutomation?.['interval-seconds'] ?? 300
         ),
 
         routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
@@ -963,10 +984,7 @@ export function useVisualConfig() {
           ensureMapInDoc(doc, ['quota-exceeded']);
           doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
           doc.setIn(['quota-exceeded', 'switch-preview-model'], values.quotaSwitchPreviewModel);
-          doc.setIn(
-            ['quota-exceeded', 'antigravity-credits'],
-            values.quotaAntigravityCredits
-          );
+          doc.setIn(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);
           deleteIfMapEmpty(doc, ['quota-exceeded']);
         }
 
@@ -987,6 +1005,25 @@ export function useVisualConfig() {
             values.codexWeeklyAutomationIntervalSeconds
           );
           deleteIfMapEmpty(doc, ['codex-weekly-automation']);
+        }
+
+        if (
+          docHas(doc, ['codex-hourly-automation']) ||
+          values.codexHourlyAutomationEnabled ||
+          values.codexHourlyAutomationIntervalSeconds.trim() !== '300'
+        ) {
+          ensureMapInDoc(doc, ['codex-hourly-automation']);
+          setBooleanInDoc(
+            doc,
+            ['codex-hourly-automation', 'enabled'],
+            values.codexHourlyAutomationEnabled
+          );
+          setIntFromStringInDoc(
+            doc,
+            ['codex-hourly-automation', 'interval-seconds'],
+            values.codexHourlyAutomationIntervalSeconds
+          );
+          deleteIfMapEmpty(doc, ['codex-hourly-automation']);
         }
 
         if (docHas(doc, ['routing']) || values.routingStrategy !== 'round-robin') {

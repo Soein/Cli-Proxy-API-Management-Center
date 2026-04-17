@@ -3,8 +3,37 @@
  */
 
 import { apiClient } from './client';
-import type { CodexWeeklyAutomationStatus, Config } from '@/types';
+import type { CodexHourlyAutomationStatus, CodexWeeklyAutomationStatus, Config } from '@/types';
 import { normalizeConfigResponse } from './transformers';
+
+// parseAutomationStatus 归一化后端 weekly/hourly automation status 响应,
+// 兼容 snake_case 与 camelCase 两种字段命名。
+function parseAutomationStatus(
+  raw: Record<string, unknown> | null | undefined
+): CodexWeeklyAutomationStatus {
+  const lastCheckedAtRaw = raw?.['last_checked_at'] ?? raw?.lastCheckedAt;
+  const autoDisabledCountRaw = raw?.['auto_disabled_count'] ?? raw?.autoDisabledCount;
+
+  let autoDisabledCount = 0;
+  if (typeof autoDisabledCountRaw === 'number' && Number.isFinite(autoDisabledCountRaw)) {
+    autoDisabledCount = autoDisabledCountRaw;
+  } else if (typeof autoDisabledCountRaw === 'string' && autoDisabledCountRaw.trim() !== '') {
+    const parsed = Number(autoDisabledCountRaw);
+    if (Number.isFinite(parsed)) {
+      autoDisabledCount = parsed;
+    }
+  }
+
+  return {
+    enabled: Boolean(raw?.enabled),
+    running: Boolean(raw?.running),
+    lastCheckedAt:
+      typeof lastCheckedAtRaw === 'string' && lastCheckedAtRaw.trim() !== ''
+        ? lastCheckedAtRaw
+        : null,
+    autoDisabledCount,
+  };
+}
 
 export const configApi = {
   /**
@@ -38,7 +67,8 @@ export const configApi = {
   /**
    * 更新重试次数
    */
-  updateRequestRetry: (retryCount: number) => apiClient.put('/request-retry', { value: retryCount }),
+  updateRequestRetry: (retryCount: number) =>
+    apiClient.put('/request-retry', { value: retryCount }),
 
   /**
    * 配额回退：切换项目
@@ -69,31 +99,27 @@ export const configApi = {
    */
   async getCodexWeeklyAutomationStatus(): Promise<CodexWeeklyAutomationStatus> {
     const raw = await apiClient.get<Record<string, unknown>>('/codex-weekly-automation/status');
-    const lastCheckedAtRaw = raw?.['last_checked_at'] ?? raw?.lastCheckedAt;
-    const autoDisabledCountRaw = raw?.['auto_disabled_count'] ?? raw?.autoDisabledCount;
+    return parseAutomationStatus(raw);
+  },
 
-    let autoDisabledCount = 0;
-    if (typeof autoDisabledCountRaw === 'number' && Number.isFinite(autoDisabledCountRaw)) {
-      autoDisabledCount = autoDisabledCountRaw;
-    } else if (
-      typeof autoDisabledCountRaw === 'string' &&
-      autoDisabledCountRaw.trim() !== ''
-    ) {
-      const parsed = Number(autoDisabledCountRaw);
-      if (Number.isFinite(parsed)) {
-        autoDisabledCount = parsed;
-      }
-    }
+  /**
+   * Codex 5h 自动检测开关
+   */
+  updateCodexHourlyAutomationEnabled: (enabled: boolean) =>
+    apiClient.put('/codex-hourly-automation/enabled', { value: enabled }),
 
-    return {
-      enabled: Boolean(raw?.enabled),
-      running: Boolean(raw?.running),
-      lastCheckedAt:
-        typeof lastCheckedAtRaw === 'string' && lastCheckedAtRaw.trim() !== ''
-          ? lastCheckedAtRaw
-          : null,
-      autoDisabledCount,
-    };
+  /**
+   * Codex 5h 自动检测间隔
+   */
+  updateCodexHourlyAutomationIntervalSeconds: (value: number) =>
+    apiClient.put('/codex-hourly-automation/interval-seconds', { value }),
+
+  /**
+   * 获取 Codex 5h 自动检测状态
+   */
+  async getCodexHourlyAutomationStatus(): Promise<CodexHourlyAutomationStatus> {
+    const raw = await apiClient.get<Record<string, unknown>>('/codex-hourly-automation/status');
+    return parseAutomationStatus(raw);
   },
 
   /**
@@ -125,8 +151,7 @@ export const configApi = {
   /**
    * 更新日志总大小上限（MB）
    */
-  updateLogsMaxTotalSizeMb: (value: number) =>
-    apiClient.put('/logs-max-total-size-mb', { value }),
+  updateLogsMaxTotalSizeMb: (value: number) => apiClient.put('/logs-max-total-size-mb', { value }),
 
   /**
    * WebSocket 鉴权开关
@@ -144,7 +169,8 @@ export const configApi = {
   /**
    * 更新强制模型前缀开关
    */
-  updateForceModelPrefix: (enabled: boolean) => apiClient.put('/force-model-prefix', { value: enabled }),
+  updateForceModelPrefix: (enabled: boolean) =>
+    apiClient.put('/force-model-prefix', { value: enabled }),
 
   /**
    * 获取路由策略
@@ -158,5 +184,6 @@ export const configApi = {
   /**
    * 更新路由策略
    */
-  updateRoutingStrategy: (strategy: string) => apiClient.put('/routing/strategy', { value: strategy }),
+  updateRoutingStrategy: (strategy: string) =>
+    apiClient.put('/routing/strategy', { value: strategy }),
 };

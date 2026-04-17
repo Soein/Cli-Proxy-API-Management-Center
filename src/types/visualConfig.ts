@@ -11,6 +11,7 @@ export type VisualConfigFieldPath =
   | 'maxRetryCredentials'
   | 'maxRetryInterval'
   | 'codexWeeklyAutomationIntervalSeconds'
+  | 'codexHourlyAutomationIntervalSeconds'
   | 'streaming.keepaliveSeconds'
   | 'streaming.bootstrapRetries'
   | 'streaming.nonstreamKeepaliveInterval';
@@ -79,6 +80,8 @@ export type VisualConfigValues = {
   quotaAntigravityCredits: boolean;
   codexWeeklyAutomationEnabled: boolean;
   codexWeeklyAutomationIntervalSeconds: string;
+  codexHourlyAutomationEnabled: boolean;
+  codexHourlyAutomationIntervalSeconds: string;
   routingStrategy: 'round-robin' | 'fill-first';
   wsAuth: boolean;
   payloadDefaultRules: PayloadRule[];
@@ -121,6 +124,8 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   quotaAntigravityCredits: true,
   codexWeeklyAutomationEnabled: false,
   codexWeeklyAutomationIntervalSeconds: '300',
+  codexHourlyAutomationEnabled: false,
+  codexHourlyAutomationIntervalSeconds: '300',
   routingStrategy: 'round-robin',
   wsAuth: false,
   payloadDefaultRules: [],

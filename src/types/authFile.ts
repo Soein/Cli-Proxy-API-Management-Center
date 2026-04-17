@@ -25,6 +25,13 @@ export interface AuthFileItem {
   authIndex?: string | number | null;
   runtimeOnly?: boolean | string;
   disabled?: boolean;
+  /**
+   * 统一 excluded 字段,同时控制 weekly 与 hourly automation。
+   */
+  codexAutomationExcluded?: boolean;
+  /**
+   * @deprecated 使用 codexAutomationExcluded。保留用于兼容旧后端响应。
+   */
   codexWeeklyAutomationExcluded?: boolean;
   unavailable?: boolean;
   status?: string;

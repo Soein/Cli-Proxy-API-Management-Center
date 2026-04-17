@@ -30,7 +30,7 @@ export type UseAuthFilesDataResult = {
   deleting: string | null;
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
-  codexWeeklyAutomationUpdating: Record<string, boolean>;
+  codexAutomationUpdating: Record<string, boolean>;
   batchStatusUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   loadFiles: () => Promise<void>;
@@ -40,10 +40,7 @@ export type UseAuthFilesDataResult = {
   handleDeleteAll: (options: DeleteAllOptions) => void;
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
-  handleCodexWeeklyAutomationExcludedToggle: (
-    item: AuthFileItem,
-    excluded: boolean
-  ) => Promise<void>;
+  handleCodexAutomationExcludedToggle: (item: AuthFileItem, excluded: boolean) => Promise<void>;
   toggleSelect: (name: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -69,9 +66,9 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
-  const [codexWeeklyAutomationUpdating, setCodexWeeklyAutomationUpdating] = useState<
-    Record<string, boolean>
-  >({});
+  const [codexAutomationUpdating, setCodexAutomationUpdating] = useState<Record<string, boolean>>(
+    {}
+  );
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
@@ -126,13 +123,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
   }, []);
 
   const applyDeletedFiles = useCallback((names: string[]) => {
-    const deletedNames = Array.from(
-      new Set(
-        names
-          .map((name) => name.trim())
-          .filter(Boolean)
-      )
-    );
+    const deletedNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
     if (deletedNames.length === 0) return;
 
     const deletedSet = new Set(deletedNames);
@@ -240,9 +231,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         }
 
         if (result.failed.length > 0) {
-          const details = result.failed
-            .map((item) => `${item.name}: ${item.error}`)
-            .join('; ');
+          const details = result.failed.map((item) => `${item.name}: ${item.error}`).join('; ');
           showNotification(`${t('notification.upload_failed')}: ${details}`, 'error');
         }
       } catch (err: unknown) {
@@ -327,9 +316,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
                 return;
               }
 
-              const result = await authFilesApi.deleteFiles(
-                filesToDelete.map((file) => file.name)
-              );
+              const result = await authFilesApi.deleteFiles(filesToDelete.map((file) => file.name));
               const success = result.deleted;
               const failed = result.failed.length;
 
@@ -443,19 +430,25 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     [showNotification, t]
   );
 
-  const handleCodexWeeklyAutomationExcludedToggle = useCallback(
+  const handleCodexAutomationExcludedToggle = useCallback(
     async (item: AuthFileItem, excluded: boolean) => {
       const name = item.name;
       const previousExcluded = Boolean(
-        item['codex_weekly_automation_excluded'] ?? item.codexWeeklyAutomationExcluded
+        item['codex_automation_excluded'] ??
+        item.codexAutomationExcluded ??
+        item['codex_weekly_automation_excluded'] ??
+        item.codexWeeklyAutomationExcluded
       );
 
-      setCodexWeeklyAutomationUpdating((prev) => ({ ...prev, [name]: true }));
+      setCodexAutomationUpdating((prev) => ({ ...prev, [name]: true }));
       setFiles((prev) =>
         prev.map((file) =>
           file.name === name
             ? {
                 ...file,
+                codexAutomationExcluded: excluded,
+                ['codex_automation_excluded']: excluded,
+                // 同步镜像旧字段,避免 UI 读到旧值时状态不一致。
                 codexWeeklyAutomationExcluded: excluded,
                 ['codex_weekly_automation_excluded']: excluded,
               }
@@ -464,11 +457,11 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
       );
 
       try {
-        await authFilesApi.setCodexWeeklyAutomationExcluded(name, excluded);
+        await authFilesApi.setCodexAutomationExcluded(name, excluded);
         showNotification(
           excluded
-            ? t('auth_files.codex_weekly_automation_excluded_enabled', { name })
-            : t('auth_files.codex_weekly_automation_excluded_disabled', { name }),
+            ? t('auth_files.codex_automation_excluded_enabled', { name })
+            : t('auth_files.codex_automation_excluded_disabled', { name }),
           'success'
         );
       } catch (err: unknown) {
@@ -478,6 +471,8 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
             file.name === name
               ? {
                   ...file,
+                  codexAutomationExcluded: previousExcluded,
+                  ['codex_automation_excluded']: previousExcluded,
                   codexWeeklyAutomationExcluded: previousExcluded,
                   ['codex_weekly_automation_excluded']: previousExcluded,
                 }
@@ -486,7 +481,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         );
         showNotification(`${t('notification.update_failed')}: ${errorMessage}`, 'error');
       } finally {
-        setCodexWeeklyAutomationUpdating((prev) => {
+        setCodexAutomationUpdating((prev) => {
           if (!prev[name]) return prev;
           const next = { ...prev };
           delete next[name];
@@ -565,7 +560,10 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
         );
 
         if (failCount === 0) {
-          showNotification(t('auth_files.batch_status_success', { count: successCount }), 'success');
+          showNotification(
+            t('auth_files.batch_status_success', { count: successCount }),
+            'success'
+          );
         } else {
           showNotification(
             t('auth_files.batch_status_partial', { success: successCount, failed: failCount }),
@@ -676,7 +674,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     deleting,
     deletingAll,
     statusUpdating,
-    codexWeeklyAutomationUpdating,
+    codexAutomationUpdating,
     batchStatusUpdating,
     fileInputRef,
     loadFiles,
@@ -686,7 +684,7 @@ export function useAuthFilesData(options: UseAuthFilesDataOptions): UseAuthFiles
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
-    handleCodexWeeklyAutomationExcludedToggle,
+    handleCodexAutomationExcludedToggle,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
