@@ -83,6 +83,8 @@ export type VisualConfigValues = {
   codexHourlyAutomationEnabled: boolean;
   codexHourlyAutomationIntervalSeconds: string;
   routingStrategy: 'round-robin' | 'fill-first';
+  routingSessionAffinity: boolean;
+  routingSessionAffinityTTL: string;
   wsAuth: boolean;
   payloadDefaultRules: PayloadRule[];
   payloadDefaultRawRules: PayloadRule[];
@@ -127,6 +129,8 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   codexHourlyAutomationEnabled: false,
   codexHourlyAutomationIntervalSeconds: '300',
   routingStrategy: 'round-robin',
+  routingSessionAffinity: false,
+  routingSessionAffinityTTL: '',
   wsAuth: false,
   payloadDefaultRules: [],
   payloadDefaultRawRules: [],
