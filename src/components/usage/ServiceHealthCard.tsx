@@ -7,6 +7,7 @@ import {
   type ServiceHealthData,
   type StatusBlockDetail,
 } from '@/utils/usage';
+import type { ClusterAggregates } from '@/types/usage';
 import type { UsagePayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -57,17 +58,21 @@ function formatDateTime(timestamp: number): string {
 export interface ServiceHealthCardProps {
   usage: UsagePayload | null;
   loading: boolean;
+  /** PG 后端返回的 7×24 hour grid（每小时的 success/failure）。
+   *  存在时优先用它构建 ServiceHealthData，更接近"集群真相"；
+   *  缺失时退化到 collectUsageDetails(usage) 的旧路径。 */
+  serverHealthGrid?: ClusterAggregates['health_grid'];
 }
 
-export function ServiceHealthCard({ usage, loading }: ServiceHealthCardProps) {
+export function ServiceHealthCard({ usage, loading, serverHealthGrid }: ServiceHealthCardProps) {
   const { t } = useTranslation();
   const [activeTooltip, setActiveTooltip] = useState<ActiveTooltipState | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   const healthData: ServiceHealthData = useMemo(() => {
     const details = usage ? collectUsageDetails(usage) : [];
-    return calculateServiceHealthData(details);
-  }, [usage]);
+    return calculateServiceHealthData(details, serverHealthGrid);
+  }, [usage, serverHealthGrid]);
 
   const hasData = healthData.totalSuccess + healthData.totalFailure > 0;
 

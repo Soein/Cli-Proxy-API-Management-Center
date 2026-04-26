@@ -9,7 +9,7 @@ import {
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 } from 'chart.js';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -17,7 +17,7 @@ import { Select } from '@/components/ui/Select';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { providersApi } from '@/services/api';
-import { useThemeStore, useConfigStore } from '@/stores';
+import { useThemeStore, useConfigStore, useUsageStatsStore } from '@/stores';
 import type { OpenAIProviderConfig } from '@/types';
 import {
   StatCards,
@@ -31,17 +31,20 @@ import {
   TokenBreakdownChart,
   CostTrendChart,
   ServiceHealthCard,
+  ClusterBadge,
   useUsageData,
   useSparklines,
-  useChartData
+  useChartData,
 } from '@/components/usage';
 import {
   getModelNamesFromUsage,
   getApiStats,
   getModelStats,
   filterUsageByTimeRange,
-  type UsageTimeRange
+  isClusterAggregated,
+  type UsageTimeRange,
 } from '@/utils/usage';
+import type { UsageQueryParams } from '@/types/usage';
 import styles from './UsagePage.module.scss';
 
 // Register Chart.js components
@@ -70,7 +73,7 @@ const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: UsageTimeRange; labelKey: strin
 const HOUR_WINDOW_BY_TIME_RANGE: Record<Exclude<UsageTimeRange, 'all'>, number> = {
   '7h': 7,
   '24h': 24,
-  '7d': 7 * 24
+  '7d': 7 * 24,
 };
 
 const isUsageTimeRange = (value: unknown): value is UsageTimeRange =>
@@ -132,18 +135,20 @@ export function UsagePage() {
   // Data hook
   const {
     usage,
+    cluster,
     loading,
     error,
     lastRefreshedAt,
     modelPrices,
     setModelPrices,
     loadUsage,
+    loadUsageWithRange,
     handleExport,
     handleImport,
     handleImportChange,
     importInputRef,
     exporting,
-    importing
+    importing,
   } = useUsageData();
 
   useHeaderRefresh(loadUsage);
@@ -176,23 +181,73 @@ export function UsagePage() {
   const openaiProvidersForUsage =
     openaiProviderState && openaiProviderState.source === openaiCompatibilityConfig
       ? openaiProviderState.providers
-      : openaiCompatibilityConfig ?? [];
+      : (openaiCompatibilityConfig ?? []);
 
   const timeRangeOptions = useMemo(
     () =>
       TIME_RANGE_OPTIONS.map((opt) => ({
         value: opt.value,
-        label: t(opt.labelKey)
+        label: t(opt.labelKey),
       })),
     [t]
   );
 
+  // 把 timeRange 翻译成后端能消费的 from/to/granularity。后端 backend=pg
+  // 时按这个范围聚合，memory/dual 时忽略并返回完整内存快照。
+  const rangeParams = useMemo<UsageQueryParams>(() => {
+    const to = new Date();
+    let from: Date;
+    let granularity: 'hour' | 'day';
+    switch (timeRange) {
+      case '7h':
+        from = new Date(to.getTime() - 7 * 3600_000);
+        granularity = 'hour';
+        break;
+      case '24h':
+        from = new Date(to.getTime() - 24 * 3600_000);
+        granularity = 'hour';
+        break;
+      case '7d':
+        from = new Date(to.getTime() - 7 * 86400_000);
+        granularity = 'day';
+        break;
+      case 'all':
+      default:
+        from = new Date(to.getTime() - 90 * 86400_000);
+        granularity = 'day';
+        break;
+    }
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      granularity,
+    };
+  }, [timeRange]);
+
+  // timeRange 变化触发后端拉取（PG 后端按范围聚合，memory 后端忽略参数）。
+  // 第一次挂载也走这条路径。
+  useEffect(() => {
+    void loadUsageWithRange(rangeParams).catch(() => {});
+  }, [loadUsageWithRange, rangeParams]);
+
+  const aggregated = isClusterAggregated({ cluster });
+
+  // PG 模式下让 RequestEventsDetailsCard 懒加载明细：默认 /usage 不带
+  // include=details，明细需要这个 lazy 调用。range 变化时也重拉。
+  const details = useUsageStatsStore((state) => state.details);
+  const detailsLoading = useUsageStatsStore((state) => state.detailsLoading);
+  const loadDetailsLazy = useUsageStatsStore((state) => state.loadDetailsLazy);
+  useEffect(() => {
+    if (!aggregated) return;
+    void loadDetailsLazy(rangeParams).catch(() => {});
+  }, [aggregated, rangeParams, loadDetailsLazy]);
+  // 集群聚合时后端已按 range 切片，无需再 client-side 过滤；非集群路径
+  // 仍然走旧的客户端过滤逻辑。
   const filteredUsage = useMemo(
-    () => (usage ? filterUsageByTimeRange(usage, timeRange) : null),
-    [usage, timeRange]
+    () => (usage ? (aggregated ? usage : filterUsageByTimeRange(usage, timeRange)) : null),
+    [usage, timeRange, aggregated]
   );
-  const hourWindowHours =
-    timeRange === 'all' ? undefined : HOUR_WINDOW_BY_TIME_RANGE[timeRange];
+  const hourWindowHours = timeRange === 'all' ? undefined : HOUR_WINDOW_BY_TIME_RANGE[timeRange];
 
   const handleChartLinesChange = useCallback((lines: string[]) => {
     setChartLines(normalizeChartLines(lines));
@@ -223,13 +278,8 @@ export function UsagePage() {
   const nowMs = lastRefreshedAt?.getTime() ?? 0;
 
   // Sparklines hook
-  const {
-    requestsSparkline,
-    tokensSparkline,
-    rpmSparkline,
-    tpmSparkline,
-    costSparkline
-  } = useSparklines({ usage: filteredUsage, loading, nowMs });
+  const { requestsSparkline, tokensSparkline, rpmSparkline, tpmSparkline, costSparkline } =
+    useSparklines({ usage: filteredUsage, loading, nowMs });
 
   // Chart data hook
   const {
@@ -240,7 +290,7 @@ export function UsagePage() {
     requestsChartData,
     tokensChartData,
     requestsChartOptions,
-    tokensChartOptions
+    tokensChartOptions,
   } = useChartData({ usage: filteredUsage, chartLines, isDark, isMobile, hourWindowHours });
 
   // Derived data
@@ -267,7 +317,10 @@ export function UsagePage() {
       )}
 
       <div className={styles.header}>
-        <h1 className={styles.pageTitle}>{t('usage_stats.title')}</h1>
+        <h1 className={styles.pageTitle}>
+          {t('usage_stats.title')}
+          <ClusterBadge aggregated={aggregated} nodeCount={cluster?.node_count} />
+        </h1>
         <div className={styles.headerActions}>
           <div className={styles.timeRangeGroup}>
             <span className={styles.timeRangeLabel}>{t('usage_stats.range_filter')}</span>
@@ -334,7 +387,7 @@ export function UsagePage() {
           tokens: tokensSparkline,
           rpm: rpmSparkline,
           tpm: tpmSparkline,
-          cost: costSparkline
+          cost: costSparkline,
         }}
       />
 
@@ -347,7 +400,7 @@ export function UsagePage() {
       />
 
       {/* Service Health */}
-      <ServiceHealthCard usage={usage} loading={loading} />
+      <ServiceHealthCard usage={usage} loading={loading} serverHealthGrid={cluster?.health_grid} />
 
       {/* Charts Grid */}
       <div className={styles.chartsGrid}>
@@ -406,6 +459,9 @@ export function UsagePage() {
         codexConfigs={config?.codexApiKeys || []}
         vertexConfigs={config?.vertexApiKeys || []}
         openaiProviders={openaiProvidersForUsage}
+        serverDetails={aggregated ? details : undefined}
+        detailsLoading={aggregated ? detailsLoading : false}
+        clusterAggregated={aggregated}
       />
 
       {/* Credential Stats */}

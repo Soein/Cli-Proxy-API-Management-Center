@@ -943,6 +943,10 @@
   },
   "usage_stats": {
     "title": "Статистика использования",
+    "cluster_badge": "Агрегировано с {{count}} узлов",
+    "loading_details": "Загрузка деталей...",
+    "request_events_node": "Узел",
+    "range_30d": "Последние 30 дней",
     "total_requests": "Всего запросов",
     "success_requests": "Успешные запросы",
     "failed_requests": "Неуспешные запросы",

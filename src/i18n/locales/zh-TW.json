@@ -966,6 +966,10 @@
   },
   "usage_stats": {
     "title": "使用統計",
+    "cluster_badge": "聚合自 {{count}} 節點",
+    "loading_details": "正在載入明細...",
+    "request_events_node": "節點",
+    "range_30d": "最近30天",
     "total_requests": "總請求數",
     "success_requests": "成功請求",
     "failed_requests": "失敗請求",

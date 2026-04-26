@@ -4,6 +4,7 @@ import { USAGE_STATS_STALE_TIME_MS, useNotificationStore, useUsageStatsStore } f
 import { usageApi } from '@/services/api/usage';
 import { downloadBlob } from '@/utils/download';
 import { loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
+import type { ClusterAggregates, UsageQueryParams } from '@/types/usage';
 
 export interface UsagePayload {
   total_requests?: number;
@@ -16,12 +17,16 @@ export interface UsagePayload {
 
 export interface UseUsageDataReturn {
   usage: UsagePayload | null;
+  cluster: ClusterAggregates | null;
   loading: boolean;
   error: string;
   lastRefreshedAt: Date | null;
   modelPrices: Record<string, ModelPrice>;
   setModelPrices: (prices: Record<string, ModelPrice>) => void;
+  /** 默认刷新（不带 range，用 store 当前 cacheKey）。 */
   loadUsage: () => Promise<void>;
+  /** 带 range 的刷新 — UsagePage 切换时段时调用。 */
+  loadUsageWithRange: (range?: UsageQueryParams) => Promise<void>;
   handleExport: () => Promise<void>;
   handleImport: () => void;
   handleImportChange: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
@@ -34,10 +39,12 @@ export function useUsageData(): UseUsageDataReturn {
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
   const usageSnapshot = useUsageStatsStore((state) => state.usage);
+  const cluster = useUsageStatsStore((state) => state.cluster);
   const loading = useUsageStatsStore((state) => state.loading);
   const storeError = useUsageStatsStore((state) => state.error);
   const lastRefreshedAtTs = useUsageStatsStore((state) => state.lastRefreshedAt);
   const loadUsageStats = useUsageStatsStore((state) => state.loadUsageStats);
+  const lastRangeRef = useRef<UsageQueryParams | undefined>(undefined);
 
   const [modelPrices, setModelPrices] = useState<Record<string, ModelPrice>>({});
   const [exporting, setExporting] = useState(false);
@@ -45,8 +52,23 @@ export function useUsageData(): UseUsageDataReturn {
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadUsage = useCallback(async () => {
-    await loadUsageStats({ force: true, staleTimeMs: USAGE_STATS_STALE_TIME_MS });
+    await loadUsageStats({
+      force: true,
+      staleTimeMs: USAGE_STATS_STALE_TIME_MS,
+      range: lastRangeRef.current,
+    });
   }, [loadUsageStats]);
+
+  const loadUsageWithRange = useCallback(
+    async (range?: UsageQueryParams) => {
+      lastRangeRef.current = range;
+      await loadUsageStats({
+        staleTimeMs: USAGE_STATS_STALE_TIME_MS,
+        range,
+      });
+    },
+    [loadUsageStats]
+  );
 
   useEffect(() => {
     void loadUsageStats({ staleTimeMs: USAGE_STATS_STALE_TIME_MS }).catch(() => {});
@@ -65,7 +87,7 @@ export function useUsageData(): UseUsageDataReturn {
       const filename = `usage-export-${safeTimestamp.replace(/[:.]/g, '-')}.json`;
       downloadBlob({
         filename,
-        blob: new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' })
+        blob: new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' }),
       });
       showNotification(t('usage_stats.export_success'), 'success');
     } catch (err: unknown) {
@@ -105,7 +127,7 @@ export function useUsageData(): UseUsageDataReturn {
           added: result?.added ?? 0,
           skipped: result?.skipped ?? 0,
           total: result?.total_requests ?? 0,
-          failed: result?.failed_requests ?? 0
+          failed: result?.failed_requests ?? 0,
         }),
         'success'
       );
@@ -140,6 +162,8 @@ export function useUsageData(): UseUsageDataReturn {
 
   return {
     usage,
+    cluster,
+    loadUsageWithRange,
     loading,
     error,
     lastRefreshedAt,
@@ -151,6 +175,6 @@ export function useUsageData(): UseUsageDataReturn {
     handleImportChange,
     importInputRef,
     exporting,
-    importing
+    importing,
   };
 }

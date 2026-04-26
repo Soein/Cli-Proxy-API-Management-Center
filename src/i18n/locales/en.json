@@ -946,6 +946,10 @@
   },
   "usage_stats": {
     "title": "Usage Statistics",
+    "cluster_badge": "Aggregated from {{count}} nodes",
+    "loading_details": "Loading details...",
+    "request_events_node": "Node",
+    "range_30d": "Last 30 days",
     "total_requests": "Total Requests",
     "success_requests": "Success Requests",
     "failed_requests": "Failed Requests",

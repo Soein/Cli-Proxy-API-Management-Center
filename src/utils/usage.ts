@@ -552,11 +552,10 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
         details.push({
           timestamp,
           source: normalizeSource(detailRaw.source),
-          auth_index:
-            (detailRaw?.auth_index ??
-              detailRaw?.authIndex ??
-              detailRaw?.AuthIndex ??
-              null) as UsageDetail['auth_index'],
+          auth_index: (detailRaw?.auth_index ??
+            detailRaw?.authIndex ??
+            detailRaw?.AuthIndex ??
+            null) as UsageDetail['auth_index'],
           latency_ms: latencyMs ?? undefined,
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,
@@ -629,11 +628,10 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
         details.push({
           timestamp,
           source: normalizeSource(detailRaw.source),
-          auth_index:
-            (detailRaw?.auth_index ??
-              detailRaw?.authIndex ??
-              detailRaw?.AuthIndex ??
-              null) as UsageDetail['auth_index'],
+          auth_index: (detailRaw?.auth_index ??
+            detailRaw?.authIndex ??
+            detailRaw?.AuthIndex ??
+            null) as UsageDetail['auth_index'],
           latency_ms: latencyMs ?? undefined,
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,
@@ -1511,7 +1509,22 @@ export interface ServiceHealthData {
   cols: number;
 }
 
-export function calculateServiceHealthData(usageDetails: UsageDetail[]): ServiceHealthData {
+export function calculateServiceHealthData(
+  usageDetails: UsageDetail[],
+  serverGrid?: Array<{
+    hour_start: string;
+    request_count: number;
+    success_count: number;
+    failure_count: number;
+  }>
+): ServiceHealthData {
+  // 服务端聚合优先：当 cluster.health_grid 存在且非空，直接用它构建
+  // 168×4=672 块（每小时 4 个 15-min 块，按比例平摊）。这放弃了 15-min
+  // 内的真实分布，但获得了集群全量视角，比单节点 details 准确。
+  if (serverGrid && serverGrid.length > 0) {
+    return buildHealthDataFromServerGrid(serverGrid);
+  }
+
   const ROWS = 7;
   const COLS = 96;
   const BLOCK_COUNT = ROWS * COLS; // 672
@@ -1913,4 +1926,113 @@ export function buildDailyCostSeries(
   const data = labels.map((l) => dayMap[l]);
 
   return { labels, data, hasData };
+}
+
+// =============================================================================
+// PG-backed cluster path (后端 backend=pg 时启用)
+// =============================================================================
+
+/** 判断响应是否带服务端聚合的 cluster 段。所有"优先用服务端数据"的
+ * 组件都用它来分流。 */
+export function isClusterAggregated(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const cluster = (payload as { cluster?: { aggregated?: boolean } }).cluster;
+  return !!cluster?.aggregated;
+}
+
+/** 把服务端 7×24 hour grid 展开成 168×4=672 块的 ServiceHealthData。
+ *
+ * 策略：每小时 4 个 15-min 子块共享父小时的成功/失败计数（按比例平摊）。
+ * 损失了 15-min 内真实分布，但获得了集群全量视角，比单节点 details 更
+ * 接近真相。子块的 startTime/endTime 仍按 15min 网格生成，使旧 UI
+ * 的 hover/tooltip 逻辑不需要改。
+ */
+function buildHealthDataFromServerGrid(
+  grid: Array<{
+    hour_start: string;
+    request_count: number;
+    success_count: number;
+    failure_count: number;
+  }>
+): ServiceHealthData {
+  const ROWS = 7;
+  const COLS = 96;
+  const BLOCK_COUNT = ROWS * COLS;
+  const BLOCK_DURATION_MS = 15 * 60 * 1000;
+  const WINDOW_MS = BLOCK_COUNT * BLOCK_DURATION_MS;
+
+  const now = Date.now();
+  const windowStart = now - WINDOW_MS;
+
+  const blockStats: Array<{ success: number; failure: number }> = Array.from(
+    { length: BLOCK_COUNT },
+    () => ({ success: 0, failure: 0 })
+  );
+
+  let totalSuccess = 0;
+  let totalFailure = 0;
+
+  grid.forEach((cell) => {
+    const hourMs = parseTimestampMs(cell.hour_start);
+    if (!Number.isFinite(hourMs) || hourMs < windowStart || hourMs > now) {
+      return;
+    }
+    // 把整小时的 success/failure 平分到 4 个 15-min 子块。整除有余数时
+    // 余数计入第一个子块——总数仍然守恒。
+    const sub = 4;
+    const baseSuccess = Math.floor(cell.success_count / sub);
+    const remSuccess = cell.success_count - baseSuccess * sub;
+    const baseFailure = Math.floor(cell.failure_count / sub);
+    const remFailure = cell.failure_count - baseFailure * sub;
+
+    for (let i = 0; i < sub; i++) {
+      const blockStart = hourMs + i * BLOCK_DURATION_MS;
+      if (blockStart > now) break;
+      const ageMs = now - blockStart;
+      const blockIndex = BLOCK_COUNT - 1 - Math.floor(ageMs / BLOCK_DURATION_MS);
+      if (blockIndex < 0 || blockIndex >= BLOCK_COUNT) continue;
+      const succ = baseSuccess + (i === 0 ? remSuccess : 0);
+      const fail = baseFailure + (i === 0 ? remFailure : 0);
+      blockStats[blockIndex].success += succ;
+      blockStats[blockIndex].failure += fail;
+      totalSuccess += succ;
+      totalFailure += fail;
+    }
+  });
+
+  const blocks: StatusBlockState[] = [];
+  const blockDetails: StatusBlockDetail[] = [];
+  blockStats.forEach((stat, idx) => {
+    const total = stat.success + stat.failure;
+    if (total === 0) {
+      blocks.push('idle');
+    } else if (stat.failure === 0) {
+      blocks.push('success');
+    } else if (stat.success === 0) {
+      blocks.push('failure');
+    } else {
+      blocks.push('mixed');
+    }
+    const blockStartTime = windowStart + idx * BLOCK_DURATION_MS;
+    blockDetails.push({
+      success: stat.success,
+      failure: stat.failure,
+      rate: total > 0 ? stat.success / total : -1,
+      startTime: blockStartTime,
+      endTime: blockStartTime + BLOCK_DURATION_MS,
+    });
+  });
+
+  const total = totalSuccess + totalFailure;
+  const successRate = total > 0 ? (totalSuccess / total) * 100 : 100;
+
+  return {
+    blocks,
+    blockDetails,
+    successRate,
+    totalSuccess,
+    totalFailure,
+    rows: ROWS,
+    cols: COLS,
+  };
 }

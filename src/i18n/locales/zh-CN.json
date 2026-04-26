@@ -946,6 +946,10 @@
   },
   "usage_stats": {
     "title": "使用统计",
+    "cluster_badge": "聚合自 {{count}} 节点",
+    "loading_details": "正在加载明细...",
+    "request_events_node": "节点",
+    "range_30d": "最近30天",
     "total_requests": "总请求数",
     "success_requests": "成功请求",
     "failed_requests": "失败请求",

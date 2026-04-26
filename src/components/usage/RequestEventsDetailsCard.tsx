@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Select } from '@/components/ui/Select';
 import { authFilesApi } from '@/services/api/authFiles';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
+import type { UsageEventRow } from '@/types/usage';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import { parseTimestampMs } from '@/utils/timestamp';
 import {
@@ -17,6 +19,7 @@ import {
   formatDurationMs,
   LATENCY_SOURCE_FIELD,
   normalizeAuthIndex,
+  type UsageDetail,
 } from '@/utils/usage';
 import { downloadBlob } from '@/utils/download';
 import styles from '@/pages/UsagePage.module.scss';
@@ -35,6 +38,8 @@ type RequestEventRow = {
   source: string;
   sourceType: string;
   authIndex: string;
+  /** Cluster 模式才有值；非集群模式留空。 */
+  nodeId: string;
   failed: boolean;
   latencyMs: number | null;
   inputTokens: number;
@@ -52,6 +57,36 @@ export interface RequestEventsDetailsCardProps {
   codexConfigs: ProviderKeyConfig[];
   vertexConfigs: ProviderKeyConfig[];
   openaiProviders: OpenAIProviderConfig[];
+  /** PG 后端的明细（含 node_id），由 store.loadDetailsLazy 拉来。
+   *  非 null 时优先使用；null 表示尚未加载（可能正在 loading）；
+   *  undefined 表示当前路径不需要懒加载（memory/dual 模式）。 */
+  serverDetails?: UsageEventRow[] | null;
+  /** PG 模式下是否在加载明细。true 时显示 loading 占位。 */
+  detailsLoading?: boolean;
+  /** 是否处于集群聚合模式 — 控制是否显示「节点」列。 */
+  clusterAggregated?: boolean;
+}
+
+// 把后端 UsageEventRow 转成内部 UsageDetail 形状，让旧的 collectUsageDetails
+// 路径下游不需要再分叉 — 一处转换，下游照常使用。
+function eventRowToUsageDetail(row: UsageEventRow): UsageDetail {
+  return {
+    timestamp: row.occurred_at,
+    failed: row.failed,
+    source: row.source,
+    auth_index: row.auth_index,
+    latency_ms: row.latency_ms,
+    tokens: {
+      input_tokens: row.input_tokens,
+      output_tokens: row.output_tokens,
+      reasoning_tokens: row.reasoning_tokens,
+      cached_tokens: row.cached_tokens,
+      total_tokens: row.total_tokens,
+    },
+    __apiName: row.api_key,
+    __modelName: row.model,
+    __nodeId: row.node_id,
+  } as UsageDetail;
 }
 
 const toNumber = (value: unknown): number => {
@@ -75,6 +110,9 @@ export function RequestEventsDetailsCard({
   codexConfigs,
   vertexConfigs,
   openaiProviders,
+  serverDetails,
+  detailsLoading,
+  clusterAggregated,
 }: RequestEventsDetailsCardProps) {
   const { t, i18n } = useTranslation();
   const latencyHint = t('usage_stats.latency_unit_hint', {
@@ -125,65 +163,69 @@ export function RequestEventsDetailsCard({
   );
 
   const rows = useMemo<RequestEventRow[]>(() => {
-    const details = collectUsageDetails(usage);
+    // 集群模式优先使用懒加载的 serverDetails；否则回退到旧的
+    // collectUsageDetails(usage)。serverDetails 已经是后端按 range 过滤
+    // 后的数据，不需要再 client-side 过滤。
+    const details: UsageDetail[] = Array.isArray(serverDetails)
+      ? serverDetails.map(eventRowToUsageDetail)
+      : collectUsageDetails(usage);
 
-    const baseRows = details
-      .map((detail, index) => {
-        const timestamp = detail.timestamp;
-        const timestampMs =
-          typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
-            ? detail.__timestampMs
-            : parseTimestampMs(timestamp);
-        const date = Number.isNaN(timestampMs) ? null : new Date(timestampMs);
-        const sourceRaw = String(detail.source ?? '').trim();
-        const authIndexRaw = detail.auth_index as unknown;
-        const authIndex =
-          authIndexRaw === null || authIndexRaw === undefined || authIndexRaw === ''
-            ? '-'
-            : String(authIndexRaw);
-        const sourceInfo = resolveSourceDisplay(
-          sourceRaw,
-          authIndexRaw,
-          sourceInfoMap,
-          authFileMap
-        );
-        const source = sourceInfo.displayName;
-        const sourceKey = sourceInfo.identityKey ?? `source:${sourceRaw || source}`;
-        const sourceType = sourceInfo.type;
-        const model = String(detail.__modelName ?? '').trim() || '-';
-        const inputTokens = Math.max(toNumber(detail.tokens?.input_tokens), 0);
-        const outputTokens = Math.max(toNumber(detail.tokens?.output_tokens), 0);
-        const reasoningTokens = Math.max(toNumber(detail.tokens?.reasoning_tokens), 0);
-        const cachedTokens = Math.max(
-          Math.max(toNumber(detail.tokens?.cached_tokens), 0),
-          Math.max(toNumber(detail.tokens?.cache_tokens), 0)
-        );
-        const totalTokens = Math.max(
-          toNumber(detail.tokens?.total_tokens),
-          extractTotalTokens(detail)
-        );
-        const latencyMs = extractLatencyMs(detail);
+    const baseRows = details.map((detail, index) => {
+      const timestamp = detail.timestamp;
+      const timestampMs =
+        typeof detail.__timestampMs === 'number' && detail.__timestampMs > 0
+          ? detail.__timestampMs
+          : parseTimestampMs(timestamp);
+      const date = Number.isNaN(timestampMs) ? null : new Date(timestampMs);
+      const sourceRaw = String(detail.source ?? '').trim();
+      const authIndexRaw = detail.auth_index as unknown;
+      const authIndex =
+        authIndexRaw === null || authIndexRaw === undefined || authIndexRaw === ''
+          ? '-'
+          : String(authIndexRaw);
+      const sourceInfo = resolveSourceDisplay(sourceRaw, authIndexRaw, sourceInfoMap, authFileMap);
+      const source = sourceInfo.displayName;
+      const sourceKey = sourceInfo.identityKey ?? `source:${sourceRaw || source}`;
+      const sourceType = sourceInfo.type;
+      const model = String(detail.__modelName ?? '').trim() || '-';
+      const inputTokens = Math.max(toNumber(detail.tokens?.input_tokens), 0);
+      const outputTokens = Math.max(toNumber(detail.tokens?.output_tokens), 0);
+      const reasoningTokens = Math.max(toNumber(detail.tokens?.reasoning_tokens), 0);
+      const cachedTokens = Math.max(
+        Math.max(toNumber(detail.tokens?.cached_tokens), 0),
+        Math.max(toNumber(detail.tokens?.cache_tokens), 0)
+      );
+      const totalTokens = Math.max(
+        toNumber(detail.tokens?.total_tokens),
+        extractTotalTokens(detail)
+      );
+      const latencyMs = extractLatencyMs(detail);
 
-        return {
-          id: `${timestamp}-${model}-${sourceKey}-${authIndex}-${index}`,
-          timestamp,
-          timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
-          timestampLabel: date ? date.toLocaleString(i18n.language) : timestamp || '-',
-          model,
-          sourceKey,
-          sourceRaw: sourceRaw || '-',
-          source,
-          sourceType,
-          authIndex,
-          failed: detail.failed === true,
-          latencyMs,
-          inputTokens,
-          outputTokens,
-          reasoningTokens,
-          cachedTokens,
-          totalTokens,
-        };
-      });
+      return {
+        id: `${timestamp}-${model}-${sourceKey}-${authIndex}-${index}`,
+        timestamp,
+        timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
+        timestampLabel: date ? date.toLocaleString(i18n.language) : timestamp || '-',
+        model,
+        sourceKey,
+        sourceRaw: sourceRaw || '-',
+        source,
+        sourceType,
+        authIndex,
+        // __nodeId 仅在 serverDetails 路径有值；旧路径留空。
+        nodeId:
+          typeof (detail as { __nodeId?: string }).__nodeId === 'string'
+            ? (detail as { __nodeId?: string }).__nodeId!
+            : '',
+        failed: detail.failed === true,
+        latencyMs,
+        inputTokens,
+        outputTokens,
+        reasoningTokens,
+        cachedTokens,
+        totalTokens,
+      };
+    });
 
     const sourceLabelKeyMap = new Map<string, Set<string>>();
     baseRows.forEach((row) => {
@@ -219,7 +261,7 @@ export function RequestEventsDetailsCard({
         source: buildDisambiguatedSourceLabel(row),
       }))
       .sort((a, b) => b.timestampMs - a.timestampMs);
-  }, [authFileMap, i18n.language, sourceInfoMap, usage]);
+  }, [authFileMap, i18n.language, sourceInfoMap, usage, serverDetails]);
 
   const hasLatencyData = useMemo(() => rows.some((row) => row.latencyMs !== null), [rows]);
 
@@ -455,7 +497,11 @@ export function RequestEventsDetailsCard({
         </div>
       </div>
 
-      {loading && rows.length === 0 ? (
+      {detailsLoading && rows.length === 0 ? (
+        <div className={styles.hint}>
+          <LoadingSpinner size={16} /> {t('usage_stats.loading_details')}
+        </div>
+      ) : loading && rows.length === 0 ? (
         <div className={styles.hint}>{t('common.loading')}</div>
       ) : rows.length === 0 ? (
         <EmptyState
@@ -487,6 +533,7 @@ export function RequestEventsDetailsCard({
               <thead>
                 <tr>
                   <th>{t('usage_stats.request_events_timestamp')}</th>
+                  {clusterAggregated && <th>{t('usage_stats.request_events_node')}</th>}
                   <th>{t('usage_stats.model_name')}</th>
                   <th>{t('usage_stats.request_events_source')}</th>
                   <th>{t('usage_stats.request_events_auth_index')}</th>
@@ -505,6 +552,11 @@ export function RequestEventsDetailsCard({
                     <td title={row.timestamp} className={styles.requestEventsTimestamp}>
                       {row.timestampLabel}
                     </td>
+                    {clusterAggregated && (
+                      <td title={row.nodeId} className={styles.modelCell}>
+                        {row.nodeId || '-'}
+                      </td>
+                    )}
                     <td className={styles.modelCell}>{row.model}</td>
                     <td className={styles.requestEventsSourceCell} title={row.source}>
                       <span>{row.source}</span>
