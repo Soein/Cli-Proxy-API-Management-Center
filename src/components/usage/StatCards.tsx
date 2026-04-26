@@ -21,6 +21,8 @@ import {
   type ModelPrice,
 } from '@/utils/usage';
 import { sparklineOptions } from '@/utils/usage/chartConfig';
+import { parseTimestampMs } from '@/utils/timestamp';
+import type { ClusterAggregates } from '@/types/usage';
 import type { UsagePayload } from './hooks/useUsageData';
 import type { SparklineBundle } from './hooks/useSparklines';
 import styles from '@/pages/UsagePage.module.scss';
@@ -49,9 +51,21 @@ export interface StatCardsProps {
     tpm: SparklineBundle | null;
     cost: SparklineBundle | null;
   };
+  /** PG mode: cluster.* block. When present:
+   *   - RPM/TPM derived from cluster.sparkline (legacy details[] is empty)
+   *   - cached/reasoning tokens read from usage.cached_tokens/reasoning_tokens
+   *     (server-aggregated; details[] doesn't carry them) */
+  cluster?: ClusterAggregates | null;
 }
 
-export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: StatCardsProps) {
+export function StatCards({
+  usage,
+  loading,
+  modelPrices,
+  nowMs,
+  sparklines,
+  cluster,
+}: StatCardsProps) {
   const { t } = useTranslation();
   const latencyHint = t('usage_stats.latency_unit_hint', {
     field: LATENCY_SOURCE_FIELD,
@@ -72,6 +86,52 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       },
     };
 
+    const now = nowMs;
+    const windowMinutes = 30;
+    const hasValidNow = Number.isFinite(now) && now > 0;
+    const denominator = windowMinutes > 0 ? windowMinutes : 1;
+
+    // PG-mode preferred path. cluster.sparkline is per-minute aggregates
+    // already cluster-summed; cached/reasoning come from usage.* totals
+    // backend extended in QueryClusterTotals.
+    if (cluster?.aggregated && Array.isArray(cluster.sparkline)) {
+      const windowStart = hasValidNow ? now - windowMinutes * 60 * 1000 : 0;
+      let requestCount = 0;
+      let tokenCount = 0;
+      cluster.sparkline.forEach((p) => {
+        if (!hasValidNow) return;
+        const ts = parseTimestampMs(p.bucket);
+        if (!Number.isFinite(ts) || ts < windowStart || ts > now) return;
+        requestCount += p.requests;
+        tokenCount += p.tokens;
+      });
+
+      const cachedTokens = Number((usage as { cached_tokens?: number })?.cached_tokens) || 0;
+      const reasoningTokens =
+        Number((usage as { reasoning_tokens?: number })?.reasoning_tokens) || 0;
+
+      // PG default response has empty details[] → no per-request cost
+      // calculation possible without ?include=details. avg_latency_ms
+      // comes from cluster.average_latency_ms (server-aggregated).
+      const avgMs = cluster.average_latency_ms;
+      return {
+        tokenBreakdown: { cachedTokens, reasoningTokens },
+        rateStats: {
+          rpm: requestCount / denominator,
+          tpm: tokenCount / denominator,
+          windowMinutes,
+          requestCount,
+          tokenCount,
+        },
+        totalCost: 0,
+        latencyStats: {
+          averageMs: typeof avgMs === 'number' && avgMs > 0 ? avgMs : null,
+          totalMs: null,
+          sampleCount: usage ? Number(usage.total_requests ?? 0) : 0,
+        },
+      };
+    }
+
     if (!usage) return empty;
     const details = collectUsageDetails(usage);
     if (!details.length) return empty;
@@ -82,12 +142,9 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     let reasoningTokens = 0;
     let totalCost = 0;
 
-    const now = nowMs;
-    const windowMinutes = 30;
     const windowStart = now - windowMinutes * 60 * 1000;
     let requestCount = 0;
     let tokenCount = 0;
-    const hasValidNow = Number.isFinite(now) && now > 0;
 
     details.forEach((detail) => {
       const tokens = detail.tokens;
@@ -115,7 +172,6 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       }
     });
 
-    const denominator = windowMinutes > 0 ? windowMinutes : 1;
     return {
       tokenBreakdown: { cachedTokens, reasoningTokens },
       rateStats: {
@@ -128,7 +184,7 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       totalCost,
       latencyStats,
     };
-  }, [hasPrices, modelPrices, nowMs, usage]);
+  }, [cluster, hasPrices, modelPrices, nowMs, usage]);
 
   const statsCards: StatCardData[] = [
     {

@@ -277,9 +277,15 @@ export function UsagePage() {
 
   const nowMs = lastRefreshedAt?.getTime() ?? 0;
 
-  // Sparklines hook
+  // Sparklines hook — pass cluster.sparkline so PG mode (empty details[])
+  // can still draw last-hour sparkline charts.
   const { requestsSparkline, tokensSparkline, rpmSparkline, tpmSparkline, costSparkline } =
-    useSparklines({ usage: filteredUsage, loading, nowMs });
+    useSparklines({
+      usage: filteredUsage,
+      loading,
+      nowMs,
+      serverSparkline: cluster?.sparkline,
+    });
 
   // Chart data hook
   const {
@@ -389,6 +395,7 @@ export function UsagePage() {
           tpm: tpmSparkline,
           cost: costSparkline,
         }}
+        cluster={cluster}
       />
 
       {/* Chart Line Selection */}

@@ -1,5 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { collectUsageDetails, extractTotalTokens } from '@/utils/usage';
+import { parseTimestampMs } from '@/utils/timestamp';
+import type { ClusterSparklinePoint } from '@/types/usage';
 import type { UsagePayload } from './useUsageData';
 
 export interface SparklineData {
@@ -25,6 +27,11 @@ export interface UseSparklinesOptions {
   usage: UsagePayload | null;
   loading: boolean;
   nowMs: number;
+  /** PG mode: cluster.sparkline (per-minute aggregates over the last hour).
+   *  When present, takes precedence over details[]-derived bucketing —
+   *  necessary because PG-mode payload has empty details[] by default
+   *  (lazy-loaded), so the legacy path would compute zero. */
+  serverSparkline?: ClusterSparklinePoint[];
 }
 
 export interface UseSparklinesReturn {
@@ -35,33 +42,51 @@ export interface UseSparklinesReturn {
   costSparkline: SparklineBundle | null;
 }
 
-export function useSparklines({ usage, loading, nowMs }: UseSparklinesOptions): UseSparklinesReturn {
+export function useSparklines({
+  usage,
+  loading,
+  nowMs,
+  serverSparkline,
+}: UseSparklinesOptions): UseSparklinesReturn {
   const lastHourSeries = useMemo(() => {
-    if (!usage) return { labels: [], requests: [], tokens: [] };
     if (!Number.isFinite(nowMs) || nowMs <= 0) {
       return { labels: [], requests: [], tokens: [] };
     }
-    const details = collectUsageDetails(usage);
-    if (!details.length) return { labels: [], requests: [], tokens: [] };
-
     const windowMinutes = 60;
     const now = nowMs;
     const windowStart = now - windowMinutes * 60 * 1000;
     const requestBuckets = new Array(windowMinutes).fill(0);
     const tokenBuckets = new Array(windowMinutes).fill(0);
 
-    details.forEach((detail) => {
-      const timestamp = detail.__timestampMs ?? 0;
-      if (!Number.isFinite(timestamp) || timestamp < windowStart || timestamp > now) {
-        return;
-      }
-      const minuteIndex = Math.min(
-        windowMinutes - 1,
-        Math.floor((timestamp - windowStart) / 60000)
-      );
-      requestBuckets[minuteIndex] += 1;
-      tokenBuckets[minuteIndex] += extractTotalTokens(detail);
-    });
+    // PG-mode preferred path: cluster.sparkline carries per-minute
+    // bucket aggregates already cluster-summed across all node_id.
+    if (Array.isArray(serverSparkline) && serverSparkline.length > 0) {
+      serverSparkline.forEach((p) => {
+        const ts = parseTimestampMs(p.bucket);
+        if (!Number.isFinite(ts) || ts < windowStart || ts > now) return;
+        const idx = Math.min(windowMinutes - 1, Math.floor((ts - windowStart) / 60000));
+        requestBuckets[idx] += p.requests;
+        tokenBuckets[idx] += p.tokens;
+      });
+    } else if (usage) {
+      // Legacy path: derive from details[] (memory/dual mode).
+      const details = collectUsageDetails(usage);
+      if (!details.length) return { labels: [], requests: [], tokens: [] };
+      details.forEach((detail) => {
+        const timestamp = detail.__timestampMs ?? 0;
+        if (!Number.isFinite(timestamp) || timestamp < windowStart || timestamp > now) {
+          return;
+        }
+        const minuteIndex = Math.min(
+          windowMinutes - 1,
+          Math.floor((timestamp - windowStart) / 60000)
+        );
+        requestBuckets[minuteIndex] += 1;
+        tokenBuckets[minuteIndex] += extractTotalTokens(detail);
+      });
+    } else {
+      return { labels: [], requests: [], tokens: [] };
+    }
 
     const labels = requestBuckets.map((_, idx) => {
       const date = new Date(windowStart + (idx + 1) * 60000);
@@ -71,7 +96,7 @@ export function useSparklines({ usage, loading, nowMs }: UseSparklinesOptions): 
     });
 
     return { labels, requests: requestBuckets, tokens: tokenBuckets };
-  }, [nowMs, usage]);
+  }, [nowMs, usage, serverSparkline]);
 
   const buildSparkline = useCallback(
     (
@@ -82,6 +107,10 @@ export function useSparklines({ usage, loading, nowMs }: UseSparklinesOptions): 
       if (loading || !series?.data?.length) {
         return null;
       }
+      // Render only when there's actual non-zero data; an all-zero array
+      // would draw a flat baseline that looks like a bug.
+      const hasAnyValue = series.data.some((v) => v > 0);
+      if (!hasAnyValue) return null;
       const sliceStart = Math.max(series.data.length - 60, 0);
       const labels = series.labels.slice(sliceStart);
       const points = series.data.slice(sliceStart);
@@ -96,10 +125,10 @@ export function useSparklines({ usage, loading, nowMs }: UseSparklinesOptions): 
               fill: true,
               tension: 0.45,
               pointRadius: 0,
-              borderWidth: 2
-            }
-          ]
-        }
+              borderWidth: 2,
+            },
+          ],
+        },
       };
     },
     [loading]
@@ -160,6 +189,6 @@ export function useSparklines({ usage, loading, nowMs }: UseSparklinesOptions): 
     tokensSparkline,
     rpmSparkline,
     tpmSparkline,
-    costSparkline
+    costSparkline,
   };
 }
