@@ -8,7 +8,7 @@ import {
   buildHourlyCostSeries,
   buildDailyCostSeries,
   formatUsd,
-  type ModelPrice
+  type ModelPrice,
 } from '@/utils/usage';
 import { buildChartOptions, getHourChartMinWidth } from '@/utils/usage/chartConfig';
 import { parseTimestampMs } from '@/utils/timestamp';
@@ -67,10 +67,8 @@ function buildCostSeriesFromServerTrend(
     // (unset), fall back to input price as a conservative upper bound.
     const cachePrice = avgCache > 0 ? avgCache : avgPrompt;
     const cost =
-      ((Math.max(inT - cachedT, 0) * avgPrompt +
-        outT * avgCompletion +
-        cachedT * cachePrice) /
-        1_000_000);
+      (Math.max(inT - cachedT, 0) * avgPrompt + outT * avgCompletion + cachedT * cachePrice) /
+      1_000_000;
     data.push(cost);
     if (cost > 0) hasData = true;
   });
@@ -127,9 +125,9 @@ export function CostTrendChart({
           pointBackgroundColor: COST_COLOR,
           pointBorderColor: COST_COLOR,
           fill: true,
-          tension: 0.35
-        }
-      ]
+          tension: 0.35,
+        },
+      ],
     };
 
     const baseOptions = buildChartOptions({ period, labels: series.labels, isDark, isMobile });
@@ -140,11 +138,13 @@ export function CostTrendChart({
         y: {
           ...baseOptions.scales?.y,
           ticks: {
-            ...(baseOptions.scales?.y && 'ticks' in baseOptions.scales.y ? baseOptions.scales.y.ticks : {}),
-            callback: (value: string | number) => formatUsd(Number(value))
-          }
-        }
-      }
+            ...(baseOptions.scales?.y && 'ticks' in baseOptions.scales.y
+              ? baseOptions.scales.y.ticks
+              : {}),
+            callback: (value: string | number) => formatUsd(Number(value)),
+          },
+        },
+      },
     };
 
     return { chartData: data, chartOptions: options, hasData: series.hasData };

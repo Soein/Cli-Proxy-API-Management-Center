@@ -1025,6 +1025,20 @@ export function getModelStats(
         existing.failureCount += Number(modelData.failure_count) || 0;
       }
 
+      // PG mode: server provides latency_ms_sum + latency_samples per
+      // (api,model). When present, fold them into the accumulator
+      // directly — no need to iterate details[] (which is empty).
+      const explicitLatencySum =
+        typeof modelData.latency_ms_sum === 'number'
+          ? Number(modelData.latency_ms_sum) || 0
+          : null;
+      const explicitLatencySamples =
+        typeof modelData.latency_samples === 'number'
+          ? Number(modelData.latency_samples) || 0
+          : null;
+      const hasExplicitLatency =
+        explicitLatencySum !== null && explicitLatencySamples !== null && explicitLatencySamples > 0;
+
       if (details.length > 0) {
         details.forEach((detail) => {
           const detailRecord = isRecord(detail) ? detail : null;
@@ -1037,7 +1051,9 @@ export function getModelStats(
             }
           }
 
-          addLatencySample(existing.latency, latencyMs);
+          if (!hasExplicitLatency) {
+            addLatencySample(existing.latency, latencyMs);
+          }
 
           if (price && detailRecord) {
             existing.cost += calculateCost(
@@ -1046,6 +1062,12 @@ export function getModelStats(
             );
           }
         });
+      }
+      // Fold the server-provided latency aggregate after detail iteration
+      // so detail-derived samples (memory mode) win when both exist.
+      if (hasExplicitLatency && existing.latency.sampleCount === 0) {
+        existing.latency.totalMs = explicitLatencySum!;
+        existing.latency.sampleCount = explicitLatencySamples!;
       }
       modelMap.set(modelName, existing);
     });

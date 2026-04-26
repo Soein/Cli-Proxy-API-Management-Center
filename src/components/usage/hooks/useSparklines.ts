@@ -15,7 +15,7 @@ export interface SparklineData {
       tension: number;
       pointRadius: number;
       borderWidth: number;
-    }
+    },
   ];
 }
 
