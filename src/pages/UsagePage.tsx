@@ -462,6 +462,7 @@ export function UsagePage() {
         isMobile={isMobile}
         modelPrices={modelPrices}
         hourWindowHours={hourWindowHours}
+        serverTrend={cluster?.trend}
       />
 
       {/* Details Grid */}
@@ -492,6 +493,7 @@ export function UsagePage() {
         codexConfigs={config?.codexApiKeys || []}
         vertexConfigs={config?.vertexApiKeys || []}
         openaiProviders={openaiProvidersForUsage}
+        serverCredentials={cluster?.credential_breakdown}
       />
 
       {/* Price Settings */}

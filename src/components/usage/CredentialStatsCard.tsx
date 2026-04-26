@@ -7,6 +7,7 @@ import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import { collectUsageDetails, formatCompactNumber, normalizeAuthIndex } from '@/utils/usage';
+import type { ClusterCredentialBreakdownRow } from '@/types/usage';
 import type { UsagePayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -18,6 +19,10 @@ export interface CredentialStatsCardProps {
   codexConfigs: ProviderKeyConfig[];
   vertexConfigs: ProviderKeyConfig[];
   openaiProviders: OpenAIProviderConfig[];
+  /** PG mode: cluster.credential_breakdown — already SUM(success/failure)
+   *  per (source, auth_index) cluster-wide. When present, used directly
+   *  instead of iterating details[] (which is empty in PG default payload). */
+  serverCredentials?: ClusterCredentialBreakdownRow[];
 }
 
 interface CredentialRow {
@@ -38,6 +43,7 @@ export function CredentialStatsCard({
   codexConfigs,
   vertexConfigs,
   openaiProviders,
+  serverCredentials,
 }: CredentialStatsCardProps) {
   const { t } = useTranslation();
   const [authFileMap, setAuthFileMap] = useState<Map<string, CredentialInfo>>(new Map());
@@ -85,10 +91,48 @@ export function CredentialStatsCard({
   );
 
   const rows = useMemo((): CredentialRow[] => {
-    if (!usage) return [];
-
     const rowMap = new Map<string, CredentialRow>();
 
+    // PG-mode preferred path: cluster.credential_breakdown is already
+    // (source, auth_index) → (requests, success_count, failure_count)
+    // SUM cluster-wide. No details[] iteration needed.
+    if (Array.isArray(serverCredentials) && serverCredentials.length > 0) {
+      serverCredentials.forEach((c) => {
+        const sourceInfo = resolveSourceDisplay(
+          c.source ?? '',
+          c.auth_index,
+          sourceInfoMap,
+          authFileMap
+        );
+        const key = sourceInfo.identityKey ?? sourceInfo.displayName;
+        const success = Number(c.success_count) || 0;
+        const failure = Number(c.failure_count) || 0;
+        const total = success + failure;
+        // Multiple breakdown rows can map to the same display key (e.g.
+        // same source with different auth_index variants); accumulate.
+        const existing = rowMap.get(key);
+        if (existing) {
+          existing.success += success;
+          existing.failure += failure;
+          existing.total = existing.success + existing.failure;
+          existing.successRate =
+            existing.total > 0 ? (existing.success / existing.total) * 100 : 100;
+        } else {
+          rowMap.set(key, {
+            key,
+            displayName: sourceInfo.displayName,
+            type: sourceInfo.type,
+            success,
+            failure,
+            total,
+            successRate: total > 0 ? (success / total) * 100 : 100,
+          });
+        }
+      });
+      return Array.from(rowMap.values()).sort((a, b) => b.total - a.total);
+    }
+
+    if (!usage) return [];
     collectUsageDetails(usage).forEach((detail) => {
       const sourceInfo = resolveSourceDisplay(
         detail.source ?? '',
@@ -121,7 +165,7 @@ export function CredentialStatsCard({
     });
 
     return Array.from(rowMap.values()).sort((a, b) => b.total - a.total);
-  }, [authFileMap, sourceInfoMap, usage]);
+  }, [authFileMap, sourceInfoMap, usage, serverCredentials]);
 
   return (
     <Card title={t('usage_stats.credential_stats')} className={styles.detailsFixedCard}>
