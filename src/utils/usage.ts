@@ -1311,8 +1311,18 @@ export function buildChartData(
   period: 'hour' | 'day' = 'day',
   metric: 'requests' | 'tokens' = 'requests',
   selectedModels: string[] = [],
-  options: { hourWindowHours?: number } = {}
+  options: {
+    hourWindowHours?: number;
+    /** PG mode — if provided, build single-line "All" series from
+     *  cluster.trend instead of per-model details (which is empty in
+     *  PG payload). Multi-model curves degrade to one curve in PG mode
+     *  until backend exposes trend_by_model. */
+    serverTrend?: Array<{ bucket: string; requests: number; tokens: number }>;
+  } = {}
 ): ChartData {
+  if (Array.isArray(options.serverTrend) && options.serverTrend.length > 0) {
+    return buildClusterChartData(options.serverTrend, period, metric);
+  }
   const baseSeries =
     period === 'hour'
       ? buildHourlySeriesByModel(usageData, metric, options.hourWindowHours)
@@ -1931,6 +1941,40 @@ export function buildDailyCostSeries(
 // =============================================================================
 // PG-backed cluster path (后端 backend=pg 时启用)
 // =============================================================================
+
+/** 把后端 cluster.trend 数组转成单线 "All" ChartData（period 决定 label
+ *  形式），用于 PG 模式下 UsageChart 的"请求趋势/Token 使用趋势"。 */
+export function buildClusterChartData(
+  trend: Array<{ bucket: string; requests: number; tokens: number }>,
+  period: 'hour' | 'day',
+  metric: 'requests' | 'tokens'
+): ChartData {
+  const labels: string[] = [];
+  const data: number[] = [];
+  trend.forEach((p) => {
+    const ts = parseTimestampMs(p.bucket);
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    const d = new Date(ts);
+    labels.push(period === 'hour' ? formatHourLabel(d) : formatDayLabel(d));
+    data.push(metric === 'tokens' ? p.tokens : p.requests);
+  });
+  const style = CHART_COLORS[0];
+  return {
+    labels,
+    datasets: [
+      {
+        label: 'All Models',
+        data,
+        borderColor: style.borderColor,
+        backgroundColor: (ctx) => buildAreaGradient(ctx, style.borderColor, style.backgroundColor),
+        pointBackgroundColor: style.borderColor,
+        pointBorderColor: style.borderColor,
+        fill: true,
+        tension: 0.35,
+      },
+    ],
+  };
+}
 
 /** 判断响应是否带服务端聚合的 cluster 段。所有"优先用服务端数据"的
  * 组件都用它来分流。 */

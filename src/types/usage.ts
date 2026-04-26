@@ -72,6 +72,12 @@ export interface ClusterTrendPoint {
   bucket: string;
   requests: number;
   tokens: number;
+  /** Per-token-type breakdown — present in current backend; older PG
+   *  backends may omit these. Front-end treats missing as 0. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cached_tokens?: number;
+  reasoning_tokens?: number;
 }
 
 export interface ClusterSparklinePoint {

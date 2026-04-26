@@ -6,9 +6,12 @@ import { Button } from '@/components/ui/Button';
 import {
   buildHourlyTokenBreakdown,
   buildDailyTokenBreakdown,
-  type TokenCategory
+  type TokenCategory,
+  type TokenBreakdownSeries,
 } from '@/utils/usage';
 import { buildChartOptions, getHourChartMinWidth } from '@/utils/usage/chartConfig';
+import { parseTimestampMs } from '@/utils/timestamp';
+import type { ClusterTrendPoint } from '@/types/usage';
 import type { UsagePayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -21,12 +24,58 @@ const TOKEN_COLORS: Record<TokenCategory, { border: string; bg: string }> = {
 
 const CATEGORIES: TokenCategory[] = ['input', 'output', 'cached', 'reasoning'];
 
+/** Convert backend cluster.trend (already per-bucket aggregated cluster-wide)
+ *  to the TokenBreakdownSeries shape this component expects.
+ *  Bucket label format follows period (hour/day). When backend doesn't yet
+ *  expose the per-type fields (legacy), we fall back to attributing all
+ *  tokens to "input" rather than dropping them — better than empty chart. */
+function buildSeriesFromServerTrend(
+  trend: ClusterTrendPoint[],
+  period: 'hour' | 'day'
+): TokenBreakdownSeries {
+  const labels: string[] = [];
+  const dataByCategory: Record<TokenCategory, number[]> = {
+    input: [],
+    output: [],
+    cached: [],
+    reasoning: [],
+  };
+  let hasData = false;
+  trend.forEach((p) => {
+    const ts = parseTimestampMs(p.bucket);
+    if (!Number.isFinite(ts) || ts <= 0) return;
+    const d = new Date(ts);
+    const hh = d.getHours().toString().padStart(2, '0');
+    const dd = d.getDate().toString().padStart(2, '0');
+    const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+    labels.push(period === 'hour' ? `${mm}/${dd} ${hh}:00` : `${mm}/${dd}`);
+
+    const inT = Number(p.input_tokens) || 0;
+    const outT = Number(p.output_tokens) || 0;
+    const cachedT = Number(p.cached_tokens) || 0;
+    const reasoningT = Number(p.reasoning_tokens) || 0;
+    const fallbackToTotal = inT + outT + cachedT + reasoningT === 0 && p.tokens > 0;
+
+    dataByCategory.input.push(fallbackToTotal ? p.tokens : inT);
+    dataByCategory.output.push(fallbackToTotal ? 0 : outT);
+    dataByCategory.cached.push(fallbackToTotal ? 0 : cachedT);
+    dataByCategory.reasoning.push(fallbackToTotal ? 0 : reasoningT);
+    if (inT + outT + cachedT + reasoningT + p.tokens > 0) hasData = true;
+  });
+  return { labels, dataByCategory, hasData };
+}
+
 export interface TokenBreakdownChartProps {
   usage: UsagePayload | null;
   loading: boolean;
   isDark: boolean;
   isMobile: boolean;
   hourWindowHours?: number;
+  /** PG mode: when present, build the 4-category stacked series from
+   *  cluster.trend's per-token-type sums (input/output/cached/reasoning).
+   *  In PG payload usage.apis[].models[].details[] is empty by default
+   *  so the legacy buildHourlyTokenBreakdown returns no data. */
+  serverTrend?: ClusterTrendPoint[];
 }
 
 export function TokenBreakdownChart({
@@ -34,16 +83,19 @@ export function TokenBreakdownChart({
   loading,
   isDark,
   isMobile,
-  hourWindowHours
+  hourWindowHours,
+  serverTrend,
 }: TokenBreakdownChartProps) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<'hour' | 'day'>('hour');
 
   const { chartData, chartOptions } = useMemo(() => {
-    const series =
-      period === 'hour'
-        ? buildHourlyTokenBreakdown(usage, hourWindowHours)
-        : buildDailyTokenBreakdown(usage);
+    const series: TokenBreakdownSeries =
+      Array.isArray(serverTrend) && serverTrend.length > 0
+        ? buildSeriesFromServerTrend(serverTrend, period)
+        : period === 'hour'
+          ? buildHourlyTokenBreakdown(usage, hourWindowHours)
+          : buildDailyTokenBreakdown(usage);
     const categoryLabels: Record<TokenCategory, string> = {
       input: t('usage_stats.input_tokens'),
       output: t('usage_stats.output_tokens'),
@@ -82,7 +134,7 @@ export function TokenBreakdownChart({
     };
 
     return { chartData: data, chartOptions: options };
-  }, [usage, period, isDark, isMobile, hourWindowHours, t]);
+  }, [usage, period, isDark, isMobile, hourWindowHours, t, serverTrend]);
 
   return (
     <Card

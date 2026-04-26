@@ -297,7 +297,14 @@ export function UsagePage() {
     tokensChartData,
     requestsChartOptions,
     tokensChartOptions,
-  } = useChartData({ usage: filteredUsage, chartLines, isDark, isMobile, hourWindowHours });
+  } = useChartData({
+    usage: filteredUsage,
+    chartLines,
+    isDark,
+    isMobile,
+    hourWindowHours,
+    serverTrend: cluster?.trend,
+  });
 
   // Derived data
   const modelNames = useMemo(() => getModelNamesFromUsage(usage), [usage]);
@@ -444,6 +451,7 @@ export function UsagePage() {
         isDark={isDark}
         isMobile={isMobile}
         hourWindowHours={hourWindowHours}
+        serverTrend={cluster?.trend}
       />
 
       {/* Cost Trend Chart */}

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import type { ChartOptions } from 'chart.js';
 import { buildChartData, type ChartData } from '@/utils/usage';
 import { buildChartOptions } from '@/utils/usage/chartConfig';
+import type { ClusterTrendPoint } from '@/types/usage';
 import type { UsagePayload } from './useUsageData';
 
 export interface UseChartDataOptions {
@@ -10,6 +11,10 @@ export interface UseChartDataOptions {
   isDark: boolean;
   isMobile: boolean;
   hourWindowHours?: number;
+  /** PG mode — when set, charts build single-line series from
+   *  cluster.trend instead of per-model details (which is empty in
+   *  PG default payload). Multi-model curves degrade to one curve. */
+  serverTrend?: ClusterTrendPoint[];
 }
 
 export interface UseChartDataReturn {
@@ -28,20 +33,27 @@ export function useChartData({
   chartLines,
   isDark,
   isMobile,
-  hourWindowHours
+  hourWindowHours,
+  serverTrend,
 }: UseChartDataOptions): UseChartDataReturn {
   const [requestsPeriod, setRequestsPeriod] = useState<'hour' | 'day'>('day');
   const [tokensPeriod, setTokensPeriod] = useState<'hour' | 'day'>('day');
 
   const requestsChartData = useMemo(() => {
-    if (!usage) return { labels: [], datasets: [] };
-    return buildChartData(usage, requestsPeriod, 'requests', chartLines, { hourWindowHours });
-  }, [usage, requestsPeriod, chartLines, hourWindowHours]);
+    if (!usage && !serverTrend?.length) return { labels: [], datasets: [] };
+    return buildChartData(usage, requestsPeriod, 'requests', chartLines, {
+      hourWindowHours,
+      serverTrend,
+    });
+  }, [usage, requestsPeriod, chartLines, hourWindowHours, serverTrend]);
 
   const tokensChartData = useMemo(() => {
-    if (!usage) return { labels: [], datasets: [] };
-    return buildChartData(usage, tokensPeriod, 'tokens', chartLines, { hourWindowHours });
-  }, [usage, tokensPeriod, chartLines, hourWindowHours]);
+    if (!usage && !serverTrend?.length) return { labels: [], datasets: [] };
+    return buildChartData(usage, tokensPeriod, 'tokens', chartLines, {
+      hourWindowHours,
+      serverTrend,
+    });
+  }, [usage, tokensPeriod, chartLines, hourWindowHours, serverTrend]);
 
   const requestsChartOptions = useMemo(
     () =>
