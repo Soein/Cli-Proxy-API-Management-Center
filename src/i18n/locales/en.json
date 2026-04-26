@@ -947,6 +947,7 @@
   "usage_stats": {
     "title": "Usage Statistics",
     "cluster_badge": "Aggregated from {{count}} nodes",
+    "cluster_badge_ratio": "Aggregated from {{active}}/{{total}} nodes",
     "loading_details": "Loading details...",
     "request_events_node": "Node",
     "range_30d": "Last 30 days",

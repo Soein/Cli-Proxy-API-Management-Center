@@ -325,7 +325,11 @@ export function UsagePage() {
       <div className={styles.header}>
         <h1 className={styles.pageTitle}>
           {t('usage_stats.title')}
-          <ClusterBadge aggregated={aggregated} nodeCount={cluster?.node_count} />
+          <ClusterBadge
+            aggregated={aggregated}
+            nodeCount={cluster?.node_count}
+            clusterNodeCount={cluster?.cluster_node_count}
+          />
         </h1>
         <div className={styles.headerActions}>
           <div className={styles.timeRangeGroup}>

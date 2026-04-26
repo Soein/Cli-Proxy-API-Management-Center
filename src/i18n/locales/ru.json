@@ -944,6 +944,7 @@
   "usage_stats": {
     "title": "Статистика использования",
     "cluster_badge": "Агрегировано с {{count}} узлов",
+    "cluster_badge_ratio": "Агрегировано с {{active}}/{{total}} узлов",
     "loading_details": "Загрузка деталей...",
     "request_events_node": "Узел",
     "range_30d": "Последние 30 дней",

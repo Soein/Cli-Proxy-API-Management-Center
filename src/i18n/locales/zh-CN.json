@@ -947,6 +947,7 @@
   "usage_stats": {
     "title": "使用统计",
     "cluster_badge": "聚合自 {{count}} 节点",
+    "cluster_badge_ratio": "聚合自 {{active}}/{{total}} 节点",
     "loading_details": "正在加载明细...",
     "request_events_node": "节点",
     "range_30d": "最近30天",

@@ -111,7 +111,12 @@ export interface ClusterRangeMeta {
 
 export interface ClusterAggregates {
   aggregated: boolean;
+  /** Number of nodes that contributed traffic in the query window. */
   node_count: number;
+  /** Number of nodes alive in the cluster (heartbeat fresh). May be 0
+   *  on legacy backends that don't expose this — UI should treat 0 as
+   *  "unknown" and fall back to plain `node_count` rendering. */
+  cluster_node_count?: number;
   range: ClusterRangeMeta;
   trend: ClusterTrendPoint[];
   sparkline: ClusterSparklinePoint[];
