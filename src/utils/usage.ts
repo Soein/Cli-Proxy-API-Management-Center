@@ -1029,15 +1029,15 @@ export function getModelStats(
       // (api,model). When present, fold them into the accumulator
       // directly — no need to iterate details[] (which is empty).
       const explicitLatencySum =
-        typeof modelData.latency_ms_sum === 'number'
-          ? Number(modelData.latency_ms_sum) || 0
-          : null;
+        typeof modelData.latency_ms_sum === 'number' ? Number(modelData.latency_ms_sum) || 0 : null;
       const explicitLatencySamples =
         typeof modelData.latency_samples === 'number'
           ? Number(modelData.latency_samples) || 0
           : null;
       const hasExplicitLatency =
-        explicitLatencySum !== null && explicitLatencySamples !== null && explicitLatencySamples > 0;
+        explicitLatencySum !== null &&
+        explicitLatencySamples !== null &&
+        explicitLatencySamples > 0;
 
       if (details.length > 0) {
         details.forEach((detail) => {
