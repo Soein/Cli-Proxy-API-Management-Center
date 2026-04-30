@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Line } from 'react-chartjs-2';
+import type { ChartData, ChartOptions, TooltipItem } from 'chart.js';
+import { Bar } from 'react-chartjs-2';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -65,6 +66,12 @@ function buildSeriesFromServerTrend(
   return { labels, dataByCategory, hasData };
 }
 
+function formatTokens(num: number): string {
+  if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+  if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+  return num.toString();
+}
+
 export interface TokenBreakdownChartProps {
   usage: UsagePayload | null;
   loading: boolean;
@@ -103,7 +110,7 @@ export function TokenBreakdownChart({
       reasoning: t('usage_stats.reasoning_tokens'),
     };
 
-    const data = {
+    const data: ChartData<'bar'> = {
       labels: series.labels,
       datasets: CATEGORIES.map((cat) => ({
         label: categoryLabels[cat],
@@ -117,8 +124,13 @@ export function TokenBreakdownChart({
       })),
     };
 
-    const baseOptions = buildChartOptions({ period, labels: series.labels, isDark, isMobile });
-    const options = {
+    const baseOptions = buildChartOptions({
+      period,
+      labels: series.labels,
+      isDark,
+      isMobile,
+    }) as ChartOptions<'bar'>;
+    const options: ChartOptions<'bar'> = {
       ...baseOptions,
       scales: {
         ...baseOptions.scales,
@@ -131,10 +143,35 @@ export function TokenBreakdownChart({
           stacked: true,
         },
       },
+      plugins: {
+        ...baseOptions.plugins,
+        tooltip: {
+          ...baseOptions.plugins?.tooltip,
+          itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
+          callbacks: {
+            ...baseOptions.plugins?.tooltip?.callbacks,
+            label: function (context: TooltipItem<'bar'>) {
+              const val = Number(context.raw) || 0;
+              const cat = CATEGORIES[context.datasetIndex];
+              let text = `${context.dataset.label}: ${formatTokens(val)}`;
+
+              if (cat === 'cached') {
+                const inputVal = Number(series.dataByCategory.input[context.dataIndex]) || 0;
+                if (inputVal > 0) {
+                  const perc = ((val / inputVal) * 100).toFixed(2);
+                  text += ` (${perc}%)`;
+                }
+              }
+              return text;
+            },
+          },
+        },
+      },
     };
 
     return { chartData: data, chartOptions: options };
   }, [usage, period, isDark, isMobile, hourWindowHours, t, serverTrend]);
+  const labels = chartData.labels ?? [];
 
   return (
     <Card
@@ -160,7 +197,7 @@ export function TokenBreakdownChart({
     >
       {loading ? (
         <div className={styles.hint}>{t('common.loading')}</div>
-      ) : chartData.labels.length > 0 ? (
+      ) : labels.length > 0 ? (
         <div className={styles.chartWrapper}>
           <div className={styles.chartLegend} aria-label="Chart legend">
             {chartData.datasets.map((dataset, index) => (
@@ -171,7 +208,7 @@ export function TokenBreakdownChart({
               >
                 <span
                   className={styles.legendDot}
-                  style={{ backgroundColor: dataset.borderColor }}
+                  style={{ backgroundColor: TOKEN_COLORS[CATEGORIES[index]].border }}
                 />
                 <span className={styles.legendLabel}>{dataset.label}</span>
               </div>
@@ -183,11 +220,11 @@ export function TokenBreakdownChart({
                 className={styles.chartCanvas}
                 style={
                   period === 'hour'
-                    ? { minWidth: getHourChartMinWidth(chartData.labels.length, isMobile) }
+                    ? { minWidth: getHourChartMinWidth(labels.length, isMobile) }
                     : undefined
                 }
               >
-                <Line data={chartData} options={chartOptions} />
+                <Bar data={chartData} options={chartOptions} />
               </div>
             </div>
           </div>

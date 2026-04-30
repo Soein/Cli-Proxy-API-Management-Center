@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Chart as ChartJS,
+  BarElement,
   CategoryScale,
   LinearScale,
   PointElement,
@@ -49,6 +50,7 @@ import styles from './UsagePage.module.scss';
 
 // Register Chart.js components
 ChartJS.register(
+  BarElement,
   CategoryScale,
   LinearScale,
   PointElement,
