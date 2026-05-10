@@ -542,6 +542,7 @@
     "filter_antigravity": "Antigravity",
     "filter_iflow": "iFlow",
     "filter_vertex": "Vertex",
+    "filter_kiro": "Kiro",
     "filter_empty": "空文件",
     "filter_unknown": "其他",
     "type_qwen": "Qwen",
