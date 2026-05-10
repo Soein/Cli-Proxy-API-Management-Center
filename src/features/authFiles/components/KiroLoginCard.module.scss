@@ -1,0 +1,98 @@
+.card {
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 8px;
+  padding: 1.25rem;
+  background: var(--color-card, #fff);
+  margin-bottom: 1rem;
+}
+
+.title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.desc {
+  margin: 0 0 1rem;
+  color: var(--color-text-muted, #666);
+  font-size: 0.9rem;
+}
+
+.section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--color-border-light, #f0f0f0);
+
+  &:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+.buttonRow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--color-primary, #4a90e2);
+  background: transparent;
+  color: var(--color-primary, #4a90e2);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+
+  &:hover:not(:disabled) {
+    background: var(--color-primary-bg, rgba(74, 144, 226, 0.05));
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.hint {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-text, #333);
+
+  p {
+    margin: 0.25rem 0;
+  }
+}
+
+.link {
+  color: var(--color-primary, #4a90e2);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.code {
+  background: var(--color-code-bg, #f5f5f5);
+  padding: 0.125rem 0.5rem;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 1.05em;
+  letter-spacing: 0.1em;
+}
+
+.muted {
+  color: var(--color-text-muted, #999);
+  font-style: italic;
+}
+
+.success {
+  margin-top: 0.5rem;
+  color: var(--color-success, #4caf50);
+  font-weight: 500;
+}
+
+.error {
+  margin-top: 0.5rem;
+  color: var(--color-error, #f44336);
+  font-size: 0.875rem;
+}
