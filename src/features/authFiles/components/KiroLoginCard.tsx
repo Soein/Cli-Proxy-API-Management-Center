@@ -46,20 +46,17 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
     };
   }, []);
 
-  const handlePKCE = useCallback(
-    async (provider: KiroLoginProvider) => {
-      setPkce({ kind: 'starting' });
-      try {
-        const res = await kiroApi.startPKCELogin(provider);
-        setPkce({ kind: 'opened', authUrl: res.auth_url });
-        window.open(res.auth_url, '_blank', 'noopener,noreferrer');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setPkce({ kind: 'error', message });
-      }
-    },
-    [],
-  );
+  const handlePKCE = useCallback(async (provider: KiroLoginProvider) => {
+    setPkce({ kind: 'starting' });
+    try {
+      const res = await kiroApi.startPKCELogin(provider);
+      setPkce({ kind: 'opened', authUrl: res.auth_url });
+      window.open(res.auth_url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPkce({ kind: 'error', message });
+    }
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current !== null) {
