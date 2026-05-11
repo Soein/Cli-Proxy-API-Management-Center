@@ -8,6 +8,7 @@ import type {
   KiroDeviceStatusResponse,
   KiroLoginProvider,
   KiroPKCEStartResponse,
+  KiroPKCEStatusResponse,
   KiroRefreshResponse,
 } from '@/types/kiro';
 
@@ -34,6 +35,13 @@ export const kiroApi = {
   getDeviceStatus: async (sessionId: string): Promise<KiroDeviceStatusResponse> => {
     return apiClient.get<KiroDeviceStatusResponse>(
       `/v0/management/auth/kiro/login/device/${encodeURIComponent(sessionId)}`
+    );
+  },
+
+  /** Poll the PKCE session status (frontend uses this after opening the browser). */
+  getPKCEStatus: async (sessionId: string): Promise<KiroPKCEStatusResponse> => {
+    return apiClient.get<KiroPKCEStatusResponse>(
+      `/v0/management/auth/kiro/login/pkce/${encodeURIComponent(sessionId)}`
     );
   },
 
