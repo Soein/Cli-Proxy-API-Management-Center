@@ -7,6 +7,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 import { kiroApi } from '@/services/api/kiro';
 import type { KiroDeviceStatusResponse, KiroLoginProvider } from '@/types/kiro';
 import styles from './KiroLoginCard.module.scss';
@@ -53,7 +55,6 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
     }
   }, []);
 
-  // Cleanup both timers on unmount.
   useEffect(() => {
     return () => {
       stopDevicePolling();
@@ -69,9 +70,6 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
         setPkce({ kind: 'opened', authUrl: res.auth_url, sessionId: res.session_id });
         window.open(res.auth_url, '_blank', 'noopener,noreferrer');
 
-        // Poll session status until success / error / timeout (handler closes
-        // the callback server after 10 minutes; we mirror that by stopping
-        // the poll on the first non-pending state).
         stopPKCEPolling();
         pkcePollRef.current = window.setInterval(async () => {
           try {
@@ -85,7 +83,6 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
               setPkce({ kind: 'error', message: status.error ?? 'unknown' });
             }
           } catch (err) {
-            // 404 likely means session expired; surface as error.
             stopPKCEPolling();
             setPkce({
               kind: 'error',
@@ -98,7 +95,7 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
         setPkce({ kind: 'error', message });
       }
     },
-    [stopPKCEPolling, onSuccess],
+    [stopPKCEPolling, onSuccess]
   );
 
   const handleDevice = useCallback(async () => {
@@ -139,93 +136,96 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
   }, [stopDevicePolling, onSuccess]);
 
   return (
-    <div className={styles.card}>
-      <h3 className={styles.title}>{t('ai_providers.kiro_title')}</h3>
-      <p className={styles.desc}>{t('ai_providers.kiro_desc')}</p>
+    <Card title={t('ai_providers.kiro_title')}>
+      <div className={styles.cardContent}>
+        <p className={styles.cardHint}>{t('ai_providers.kiro_desc')}</p>
 
-      {/* PKCE */}
-      <div className={styles.section}>
-        <div className={styles.buttonRow}>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => handlePKCE('google')}
-            disabled={pkce.kind === 'starting'}
-          >
-            {t('ai_providers.kiro_pkce_button_google')}
-          </button>
-          <button
-            type="button"
-            className={styles.btn}
-            onClick={() => handlePKCE('github')}
-            disabled={pkce.kind === 'starting'}
-          >
-            {t('ai_providers.kiro_pkce_button_github')}
-          </button>
+        <div className={styles.section}>
+          <div className={styles.buttonRow}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handlePKCE('google')}
+              loading={pkce.kind === 'starting'}
+            >
+              {t('ai_providers.kiro_pkce_button_google')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handlePKCE('github')}
+              loading={pkce.kind === 'starting'}
+            >
+              {t('ai_providers.kiro_pkce_button_github')}
+            </Button>
+          </div>
+          {pkce.kind === 'starting' && (
+            <p className={styles.hint}>{t('ai_providers.kiro_login_starting')}</p>
+          )}
+          {pkce.kind === 'opened' && (
+            <div className={styles.authUrlBox}>
+              <div className={styles.authUrlLabel}>{t('ai_providers.kiro_open_browser_hint')}</div>
+              <div className={styles.authUrlValue}>
+                <a href={pkce.authUrl} target="_blank" rel="noreferrer" className={styles.link}>
+                  {pkce.authUrl}
+                </a>
+              </div>
+              <p className={styles.muted}>{t('ai_providers.kiro_device_polling')}</p>
+            </div>
+          )}
+          {pkce.kind === 'success' && (
+            <div className="status-badge success">{t('ai_providers.kiro_login_success')}</div>
+          )}
+          {pkce.kind === 'error' && (
+            <div className="status-badge error">
+              {t('ai_providers.kiro_login_error', { error: pkce.message })}
+            </div>
+          )}
         </div>
-        {pkce.kind === 'starting' && (
-          <p className={styles.hint}>{t('ai_providers.kiro_login_starting')}</p>
-        )}
-        {pkce.kind === 'opened' && (
-          <div className={styles.hint}>
-            <p>{t('ai_providers.kiro_open_browser_hint')}</p>
-            <a href={pkce.authUrl} target="_blank" rel="noreferrer" className={styles.link}>
-              {pkce.authUrl}
-            </a>
-            <p className={styles.muted}>{t('ai_providers.kiro_device_polling')}</p>
-          </div>
-        )}
-        {pkce.kind === 'success' && (
-          <p className={styles.success}>{t('ai_providers.kiro_login_success')}</p>
-        )}
-        {pkce.kind === 'error' && (
-          <p className={styles.error}>
-            {t('ai_providers.kiro_login_error', { error: pkce.message })}
-          </p>
-        )}
-      </div>
 
-      {/* Builder ID device code */}
-      <div className={styles.section}>
-        <button
-          type="button"
-          className={styles.btn}
-          onClick={handleDevice}
-          disabled={device.kind === 'starting' || device.kind === 'polling'}
-        >
-          {t('ai_providers.kiro_device_button')}
-        </button>
-        {device.kind === 'starting' && (
-          <p className={styles.hint}>{t('ai_providers.kiro_login_starting')}</p>
-        )}
-        {device.kind === 'polling' && (
-          <div className={styles.hint}>
-            <p>
-              <strong>{t('ai_providers.kiro_device_user_code')}: </strong>
-              <code className={styles.code}>{device.userCode}</code>
-            </p>
-            <p>
-              <a
-                href={device.verificationUri}
-                target="_blank"
-                rel="noreferrer"
-                className={styles.link}
-              >
-                {device.verificationUri}
-              </a>
-            </p>
-            <p className={styles.muted}>{t('ai_providers.kiro_device_polling')}</p>
+        <div className={styles.section}>
+          <div className={styles.buttonRow}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDevice}
+              loading={device.kind === 'starting' || device.kind === 'polling'}
+            >
+              {t('ai_providers.kiro_device_button')}
+            </Button>
           </div>
-        )}
-        {device.kind === 'success' && (
-          <p className={styles.success}>{t('ai_providers.kiro_login_success')}</p>
-        )}
-        {device.kind === 'error' && (
-          <p className={styles.error}>
-            {t('ai_providers.kiro_login_error', { error: device.message })}
-          </p>
-        )}
+          {device.kind === 'starting' && (
+            <p className={styles.hint}>{t('ai_providers.kiro_login_starting')}</p>
+          )}
+          {device.kind === 'polling' && (
+            <div className={styles.authUrlBox}>
+              <p>
+                <strong>{t('ai_providers.kiro_device_user_code')}: </strong>
+                <code className={styles.code}>{device.userCode}</code>
+              </p>
+              <p>
+                <a
+                  href={device.verificationUri}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={styles.link}
+                >
+                  {device.verificationUri}
+                </a>
+              </p>
+              <p className={styles.muted}>{t('ai_providers.kiro_device_polling')}</p>
+            </div>
+          )}
+          {device.kind === 'success' && (
+            <div className="status-badge success">{t('ai_providers.kiro_login_success')}</div>
+          )}
+          {device.kind === 'error' && (
+            <div className="status-badge error">
+              {t('ai_providers.kiro_login_error', { error: device.message })}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </Card>
   );
 }
