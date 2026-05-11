@@ -26,7 +26,8 @@ type DeviceState =
 type PKCEState =
   | { kind: 'idle' }
   | { kind: 'starting' }
-  | { kind: 'opened'; authUrl: string }
+  | { kind: 'opened'; authUrl: string; sessionId: string }
+  | { kind: 'success' }
   | { kind: 'error'; message: string };
 
 const POLL_INTERVAL_MS = 3000;
@@ -35,35 +36,70 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
   const { t } = useTranslation();
   const [pkce, setPkce] = useState<PKCEState>({ kind: 'idle' });
   const [device, setDevice] = useState<DeviceState>({ kind: 'idle' });
-  const pollTimerRef = useRef<number | null>(null);
+  const devicePollRef = useRef<number | null>(null);
+  const pkcePollRef = useRef<number | null>(null);
 
-  // Cleanup timer on unmount.
+  const stopDevicePolling = useCallback(() => {
+    if (devicePollRef.current !== null) {
+      window.clearInterval(devicePollRef.current);
+      devicePollRef.current = null;
+    }
+  }, []);
+
+  const stopPKCEPolling = useCallback(() => {
+    if (pkcePollRef.current !== null) {
+      window.clearInterval(pkcePollRef.current);
+      pkcePollRef.current = null;
+    }
+  }, []);
+
+  // Cleanup both timers on unmount.
   useEffect(() => {
     return () => {
-      if (pollTimerRef.current !== null) {
-        window.clearInterval(pollTimerRef.current);
-      }
+      stopDevicePolling();
+      stopPKCEPolling();
     };
-  }, []);
+  }, [stopDevicePolling, stopPKCEPolling]);
 
-  const handlePKCE = useCallback(async (provider: KiroLoginProvider) => {
-    setPkce({ kind: 'starting' });
-    try {
-      const res = await kiroApi.startPKCELogin(provider);
-      setPkce({ kind: 'opened', authUrl: res.auth_url });
-      window.open(res.auth_url, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setPkce({ kind: 'error', message });
-    }
-  }, []);
+  const handlePKCE = useCallback(
+    async (provider: KiroLoginProvider) => {
+      setPkce({ kind: 'starting' });
+      try {
+        const res = await kiroApi.startPKCELogin(provider);
+        setPkce({ kind: 'opened', authUrl: res.auth_url, sessionId: res.session_id });
+        window.open(res.auth_url, '_blank', 'noopener,noreferrer');
 
-  const stopPolling = useCallback(() => {
-    if (pollTimerRef.current !== null) {
-      window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  }, []);
+        // Poll session status until success / error / timeout (handler closes
+        // the callback server after 10 minutes; we mirror that by stopping
+        // the poll on the first non-pending state).
+        stopPKCEPolling();
+        pkcePollRef.current = window.setInterval(async () => {
+          try {
+            const status = await kiroApi.getPKCEStatus(res.session_id);
+            if (status.status === 'success') {
+              stopPKCEPolling();
+              setPkce({ kind: 'success' });
+              onSuccess?.();
+            } else if (status.status === 'error') {
+              stopPKCEPolling();
+              setPkce({ kind: 'error', message: status.error ?? 'unknown' });
+            }
+          } catch (err) {
+            // 404 likely means session expired; surface as error.
+            stopPKCEPolling();
+            setPkce({
+              kind: 'error',
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }, POLL_INTERVAL_MS);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setPkce({ kind: 'error', message });
+      }
+    },
+    [stopPKCEPolling, onSuccess],
+  );
 
   const handleDevice = useCallback(async () => {
     setDevice({ kind: 'starting' });
@@ -76,20 +112,20 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
         verificationUri: res.verification_uri,
       });
 
-      stopPolling();
-      pollTimerRef.current = window.setInterval(async () => {
+      stopDevicePolling();
+      devicePollRef.current = window.setInterval(async () => {
         try {
           const status: KiroDeviceStatusResponse = await kiroApi.getDeviceStatus(res.session_id);
           if (status.status === 'success') {
-            stopPolling();
+            stopDevicePolling();
             setDevice({ kind: 'success' });
             onSuccess?.();
           } else if (status.status === 'error') {
-            stopPolling();
+            stopDevicePolling();
             setDevice({ kind: 'error', message: status.error ?? 'unknown' });
           }
         } catch (err) {
-          stopPolling();
+          stopDevicePolling();
           setDevice({
             kind: 'error',
             message: err instanceof Error ? err.message : String(err),
@@ -100,7 +136,7 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
       const message = err instanceof Error ? err.message : String(err);
       setDevice({ kind: 'error', message });
     }
-  }, [stopPolling, onSuccess]);
+  }, [stopDevicePolling, onSuccess]);
 
   return (
     <div className={styles.card}>
@@ -136,7 +172,11 @@ export function KiroLoginCard({ onSuccess }: KiroLoginCardProps) {
             <a href={pkce.authUrl} target="_blank" rel="noreferrer" className={styles.link}>
               {pkce.authUrl}
             </a>
+            <p className={styles.muted}>{t('ai_providers.kiro_device_polling')}</p>
           </div>
+        )}
+        {pkce.kind === 'success' && (
+          <p className={styles.success}>{t('ai_providers.kiro_login_success')}</p>
         )}
         {pkce.kind === 'error' && (
           <p className={styles.error}>

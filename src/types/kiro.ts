@@ -8,6 +8,15 @@ export interface KiroPKCEStartResponse {
   session_id: string;
   auth_url: string;
   state: string;
+  redirect_uri?: string;
+}
+
+export type KiroPKCEStatus = 'pending' | 'success' | 'error';
+
+export interface KiroPKCEStatusResponse {
+  status: KiroPKCEStatus;
+  error?: string;
+  access_token_preview?: string;
 }
 
 export interface KiroDeviceStartResponse {
