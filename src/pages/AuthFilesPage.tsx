@@ -42,6 +42,7 @@ import {
 import { AuthFileCard } from '@/features/authFiles/components/AuthFileCard';
 import { AuthFileModelsModal } from '@/features/authFiles/components/AuthFileModelsModal';
 import { AuthFilesPrefixProxyEditorModal } from '@/features/authFiles/components/AuthFilesPrefixProxyEditorModal';
+import { KiroLoginCard } from '@/features/authFiles/components/KiroLoginCard';
 import { OAuthExcludedCard } from '@/features/authFiles/components/OAuthExcludedCard';
 import { OAuthModelAliasCard } from '@/features/authFiles/components/OAuthModelAliasCard';
 import { useAuthFilesData } from '@/features/authFiles/hooks/useAuthFilesData';
@@ -868,6 +869,8 @@ export function AuthFilesPage() {
           </div>
         </div>
       </Card>
+
+      <KiroLoginCard onSuccess={() => loadFiles()} />
 
       <OAuthExcludedCard
         disableControls={disableControls}
