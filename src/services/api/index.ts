@@ -7,7 +7,6 @@ export * from './configFile';
 export * from './apiKeys';
 export * from './providers';
 export * from './authFiles';
-export * from './kiro';
 export * from './oauth';
 export * from './usage';
 export * from './logs';

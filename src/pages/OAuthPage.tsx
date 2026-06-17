@@ -17,7 +17,6 @@ import iconGemini from '@/assets/icons/gemini.svg';
 import iconKimiLight from '@/assets/icons/kimi-light.svg';
 import iconKimiDark from '@/assets/icons/kimi-dark.svg';
 import iconVertex from '@/assets/icons/vertex.svg';
-import { KiroLoginCard } from '@/features/authFiles/components/KiroLoginCard';
 import iconGrok from '@/assets/icons/grok.svg';
 import iconGrokDark from '@/assets/icons/grok-dark.svg';
 
@@ -644,9 +643,6 @@ export function OAuthPage() {
             </div>
           );
         })}
-
-        {/* Kiro (AWS Amazon Q) 登录 */}
-        <KiroLoginCard />
 
         {/* Vertex JSON 登录 */}
         <Card
