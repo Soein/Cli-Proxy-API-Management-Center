@@ -38,6 +38,7 @@ import {
   ApiKeysCardEditor,
   PayloadFilterRulesEditor,
   PayloadRulesEditor,
+  StringListEditor,
 } from './VisualConfigEditorBlocks';
 import styles from './VisualConfigEditor.module.scss';
 
@@ -263,6 +264,10 @@ export function VisualConfigEditor({
 
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
+    [onChange]
+  );
+  const handlePluginStoreSourcesChange = useCallback(
+    (pluginStoreSources: string[]) => onChange({ pluginStoreSources }),
     [onChange]
   );
   const handlePayloadDefaultRulesChange = useCallback(
@@ -716,6 +721,33 @@ export function VisualConfigEditor({
                   onChange={(pluginsEnabled) => onChange({ pluginsEnabled })}
                 />
               </SectionGrid>
+
+              <SectionSubsection
+                title={t('config_management.visual.sections.system.plugin_store_sources')}
+                description={t(
+                  'config_management.visual.sections.system.plugin_store_sources_desc'
+                )}
+              >
+                <div className={styles.fieldShell}>
+                  <label className={styles.fieldLabel}>
+                    {t('config_management.visual.sections.system.plugin_store_sources_label')}
+                  </label>
+                  <StringListEditor
+                    value={values.pluginStoreSources}
+                    disabled={disabled}
+                    placeholder={t(
+                      'config_management.visual.sections.system.plugin_store_sources_placeholder'
+                    )}
+                    inputAriaLabel={t(
+                      'config_management.visual.sections.system.plugin_store_sources_label'
+                    )}
+                    onChange={handlePluginStoreSourcesChange}
+                  />
+                  <div className={styles.fieldHint}>
+                    {t('config_management.visual.sections.system.plugin_store_sources_hint')}
+                  </div>
+                </div>
+              </SectionSubsection>
 
               <SectionGrid>
                 <Input

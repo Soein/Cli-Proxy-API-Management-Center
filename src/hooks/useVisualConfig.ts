@@ -120,6 +120,15 @@ function setStringInDoc(doc: YamlDocument, path: YamlPath, value: unknown): void
   }
 }
 
+function setStringListInDoc(doc: YamlDocument, path: YamlPath, values: string[]): void {
+  const nextValues = values.map((value) => value.trim()).filter(Boolean);
+  if (nextValues.length > 0) {
+    doc.setIn(path, nextValues);
+    return;
+  }
+  if (docHas(doc, path)) doc.deleteIn(path);
+}
+
 function setIntFromStringInDoc(doc: YamlDocument, path: YamlPath, value: unknown): void {
   const safe = typeof value === 'string' ? value : '';
   const trimmed = safe.trim();
@@ -822,6 +831,12 @@ function getNextDirtyFields(
         baselineValues.codexHourlyAutomationIntervalSeconds
     );
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'pluginStoreSources')) {
+    updateDirty(
+      'pluginStoreSources',
+      areStringArraysEqual(nextValues.pluginStoreSources, baselineValues.pluginStoreSources)
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'payloadDefaultRules')) {
     updateDirty(
       'payloadDefaultRules',
@@ -991,6 +1006,7 @@ export function useVisualConfig() {
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
         apiKeysText: resolveApiKeysText(parsed),
         pluginsEnabled: Boolean(plugins?.enabled),
+        pluginStoreSources: parseStringList(plugins?.['store-sources']),
 
         debug: Boolean(parsed.debug),
         commercialMode: Boolean(parsed['commercial-mode']),
@@ -1168,10 +1184,28 @@ export function useVisualConfig() {
         if (
           docHas(doc, ['plugins']) ||
           values.pluginsEnabled ||
-          shouldWriteManagedField(doc, ['plugins', 'enabled'], dirtyFields, 'pluginsEnabled')
+          values.pluginStoreSources.length > 0 ||
+          shouldWriteManagedField(doc, ['plugins', 'enabled'], dirtyFields, 'pluginsEnabled') ||
+          shouldWriteManagedField(
+            doc,
+            ['plugins', 'store-sources'],
+            dirtyFields,
+            'pluginStoreSources'
+          )
         ) {
           ensureMapInDoc(doc, ['plugins']);
           setBooleanInDoc(doc, ['plugins', 'enabled'], values.pluginsEnabled);
+          if (
+            values.pluginStoreSources.length > 0 ||
+            shouldWriteManagedField(
+              doc,
+              ['plugins', 'store-sources'],
+              dirtyFields,
+              'pluginStoreSources'
+            )
+          ) {
+            setStringListInDoc(doc, ['plugins', 'store-sources'], values.pluginStoreSources);
+          }
           deleteIfMapEmpty(doc, ['plugins']);
         }
 
