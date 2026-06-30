@@ -4,7 +4,7 @@ import type {
   GeminiKeyConfig,
   ModelAlias,
   OpenAIProviderConfig,
-  ProviderKeyConfig
+  ProviderKeyConfig,
 } from '@/types';
 import type { Config } from '@/types/config';
 import { buildHeaderObject } from '@/utils/headers';
@@ -113,7 +113,7 @@ const normalizeApiKeyEntry = (entry: unknown): ApiKeyEntry | null => {
 
   const result: ApiKeyEntry = {
     apiKey: trimmed,
-    proxyUrl: proxyUrl ? String(proxyUrl) : undefined
+    proxyUrl: proxyUrl ? String(proxyUrl) : undefined,
   };
   if (authIndex) result.authIndex = authIndex;
   return result;
@@ -305,7 +305,7 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
     config.quotaExceeded = {
       switchProject: normalizeBoolean(quota['switch-project']),
       switchPreviewModel: normalizeBoolean(quota['switch-preview-model']),
-      antigravityCredits: normalizeBoolean(quota['antigravity-credits'])
+      antigravityCredits: normalizeBoolean(quota['antigravity-credits']),
     };
   }
 
@@ -421,5 +421,5 @@ export {
   normalizeOpenAIProvider,
   normalizeProviderKeyConfig,
   normalizeHeaders,
-  normalizeExcludedModels
+  normalizeExcludedModels,
 };
