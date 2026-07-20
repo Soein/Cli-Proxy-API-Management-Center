@@ -19,9 +19,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useActionBarHeightVar } from '@/hooks/useActionBarHeightVar';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useVisualConfig } from '@/hooks/useVisualConfig';
-import type { CodexHourlyAutomationStatus, CodexWeeklyAutomationStatus } from '@/types';
 import { useNotificationStore, useAuthStore, useThemeStore, useConfigStore } from '@/stores';
-import { configApi } from '@/services/api';
 import { configFileApi } from '@/services/api/configFile';
 import styles from './ConfigPage.module.scss';
 
@@ -83,16 +81,6 @@ export function ConfigPage() {
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [serverYaml, setServerYaml] = useState('');
   const [mergedYaml, setMergedYaml] = useState('');
-  const [codexWeeklyAutomationStatus, setCodexWeeklyAutomationStatus] =
-    useState<CodexWeeklyAutomationStatus | null>(null);
-  const [codexWeeklyAutomationStatusLoading, setCodexWeeklyAutomationStatusLoading] =
-    useState(false);
-  const [codexWeeklyAutomationStatusError, setCodexWeeklyAutomationStatusError] = useState('');
-  const [codexHourlyAutomationStatus, setCodexHourlyAutomationStatus] =
-    useState<CodexHourlyAutomationStatus | null>(null);
-  const [codexHourlyAutomationStatusLoading, setCodexHourlyAutomationStatusLoading] =
-    useState(false);
-  const [codexHourlyAutomationStatusError, setCodexHourlyAutomationStatusError] = useState('');
   const [previewServerYaml, setPreviewServerYaml] = useState('');
   const [previewTab, setPreviewTab] = useState<ConfigEditorTab>('visual');
 
@@ -149,49 +137,9 @@ export function ConfigPage() {
     }
   }, [loadVisualValuesFromYaml, t]);
 
-  const loadCodexWeeklyAutomationStatus = useCallback(async () => {
-    if (connectionStatus !== 'connected') {
-      setCodexWeeklyAutomationStatus(null);
-      setCodexWeeklyAutomationStatusError('');
-      return;
-    }
-    setCodexWeeklyAutomationStatusLoading(true);
-    setCodexWeeklyAutomationStatusError('');
-    try {
-      const data = await configApi.getCodexWeeklyAutomationStatus();
-      setCodexWeeklyAutomationStatus(data);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : t('notification.refresh_failed');
-      setCodexWeeklyAutomationStatusError(message);
-    } finally {
-      setCodexWeeklyAutomationStatusLoading(false);
-    }
-  }, [connectionStatus, t]);
-
-  const loadCodexHourlyAutomationStatus = useCallback(async () => {
-    if (connectionStatus !== 'connected') {
-      setCodexHourlyAutomationStatus(null);
-      setCodexHourlyAutomationStatusError('');
-      return;
-    }
-    setCodexHourlyAutomationStatusLoading(true);
-    setCodexHourlyAutomationStatusError('');
-    try {
-      const data = await configApi.getCodexHourlyAutomationStatus();
-      setCodexHourlyAutomationStatus(data);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : t('notification.refresh_failed');
-      setCodexHourlyAutomationStatusError(message);
-    } finally {
-      setCodexHourlyAutomationStatusLoading(false);
-    }
-  }, [connectionStatus, t]);
-
   useEffect(() => {
     loadConfig();
-    void loadCodexWeeklyAutomationStatus();
-    void loadCodexHourlyAutomationStatus();
-  }, [loadCodexHourlyAutomationStatus, loadCodexWeeklyAutomationStatus, loadConfig]);
+  }, [loadConfig]);
 
   useEffect(() => {
     if (activeTab !== 'visual' || !visualParseError) return;
@@ -243,9 +191,6 @@ export function ConfigPage() {
       setMergedYaml(latestContent);
       setPreviewServerYaml(latestContent);
       loadVisualValuesFromYaml(latestContent);
-      await loadCodexWeeklyAutomationStatus();
-      await loadCodexHourlyAutomationStatus();
-
       // Keep the global config store in sync so sidebar / other pages reflect YAML changes immediately.
       try {
         useConfigStore.getState().clearCache();
@@ -645,12 +590,6 @@ export function ConfigPage() {
               values={visualValues}
               validationErrors={visualValidationErrors}
               hasPayloadValidationErrors={visualHasPayloadValidationErrors}
-              codexWeeklyAutomationStatus={codexWeeklyAutomationStatus}
-              codexWeeklyAutomationStatusLoading={codexWeeklyAutomationStatusLoading}
-              codexWeeklyAutomationStatusError={codexWeeklyAutomationStatusError}
-              codexHourlyAutomationStatus={codexHourlyAutomationStatus}
-              codexHourlyAutomationStatusLoading={codexHourlyAutomationStatusLoading}
-              codexHourlyAutomationStatusError={codexHourlyAutomationStatusError}
               disabled={disableControls || loading}
               onChange={setVisualValues}
             />

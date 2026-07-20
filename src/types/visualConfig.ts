@@ -15,8 +15,6 @@ export type VisualConfigFieldPath =
   | 'requestRetry'
   | 'maxRetryCredentials'
   | 'maxRetryInterval'
-  | 'codexWeeklyAutomationIntervalSeconds'
-  | 'codexHourlyAutomationIntervalSeconds'
   | 'authAutoRefreshWorkers'
   | 'streaming.keepaliveSeconds'
   | 'streaming.bootstrapRetries'
@@ -123,10 +121,6 @@ export type VisualConfigValues = {
   quotaSwitchProject: boolean;
   quotaSwitchPreviewModel: boolean;
   quotaAntigravityCredits: boolean;
-  codexWeeklyAutomationEnabled: boolean;
-  codexWeeklyAutomationIntervalSeconds: string;
-  codexHourlyAutomationEnabled: boolean;
-  codexHourlyAutomationIntervalSeconds: string;
   routingStrategy: 'round-robin' | 'fill-first';
   routingSessionAffinity: boolean;
   routingSessionAffinityTTL: string;
@@ -192,10 +186,6 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   quotaSwitchProject: true,
   quotaSwitchPreviewModel: true,
   quotaAntigravityCredits: false,
-  codexWeeklyAutomationEnabled: false,
-  codexWeeklyAutomationIntervalSeconds: '300',
-  codexHourlyAutomationEnabled: false,
-  codexHourlyAutomationIntervalSeconds: '300',
   routingStrategy: 'round-robin',
   routingSessionAffinity: false,
   routingSessionAffinityTTL: '',

@@ -10,7 +10,6 @@ import { parseTimestampMs } from '@/utils/timestamp';
 
 type StatusError = { status?: number };
 type AuthFileStatusResponse = { status: string; disabled: boolean };
-type AuthFileFieldsResponse = { status: string };
 type AuthFileEntry = AuthFilesResponse['files'][number];
 export type AuthFileFieldsPatch = {
   prefix?: string;
@@ -345,28 +344,6 @@ export const authFilesApi = {
 
   setStatus: (name: string, disabled: boolean) =>
     apiClient.patch<AuthFileStatusResponse>('/auth-files/status', { name, disabled }),
-
-  /**
-   * 统一的 "排除出 codex automation" 开关,同时控制 weekly 与 hourly。
-   * 请求使用新字段 codex_automation_excluded,向后兼容旧后端。
-   */
-  setCodexAutomationExcluded: (name: string, excluded: boolean) =>
-    apiClient.patch<AuthFileFieldsResponse>('/auth-files/fields', {
-      name,
-      codex_automation_excluded: excluded,
-      // 保留旧字段以便对接未更新的后端版本。新版后端会优先读取新字段。
-      codex_weekly_automation_excluded: excluded,
-    }),
-
-  /**
-   * @deprecated 使用 setCodexAutomationExcluded。保留用于旧调用点的兼容别名。
-   */
-  setCodexWeeklyAutomationExcluded: (name: string, excluded: boolean) =>
-    apiClient.patch<AuthFileFieldsResponse>('/auth-files/fields', {
-      name,
-      codex_automation_excluded: excluded,
-      codex_weekly_automation_excluded: excluded,
-    }),
 
   patchFields: (name: string, fields: AuthFileFieldsPatch) =>
     apiClient.patch('/auth-files/fields', { name, ...fields }),

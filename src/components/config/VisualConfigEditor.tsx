@@ -28,7 +28,6 @@ import {
 } from '@/components/ui/icons';
 import { ConfigSection } from '@/components/config/ConfigSection';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import type { CodexHourlyAutomationStatus, CodexWeeklyAutomationStatus } from '@/types';
 import type {
   PayloadFilterRule,
   PayloadParamValidationErrorCode,
@@ -69,12 +68,6 @@ interface VisualConfigEditorProps {
   values: VisualConfigValues;
   validationErrors?: VisualConfigValidationErrors;
   hasPayloadValidationErrors?: boolean;
-  codexWeeklyAutomationStatus?: CodexWeeklyAutomationStatus | null;
-  codexWeeklyAutomationStatusLoading?: boolean;
-  codexWeeklyAutomationStatusError?: string;
-  codexHourlyAutomationStatus?: CodexHourlyAutomationStatus | null;
-  codexHourlyAutomationStatusLoading?: boolean;
-  codexHourlyAutomationStatusError?: string;
   disabled?: boolean;
   onChange: (values: Partial<VisualConfigValues>) => void;
 }
@@ -192,12 +185,6 @@ export function VisualConfigEditor({
   values,
   validationErrors,
   hasPayloadValidationErrors = false,
-  codexWeeklyAutomationStatus = null,
-  codexWeeklyAutomationStatusLoading = false,
-  codexWeeklyAutomationStatusError,
-  codexHourlyAutomationStatus = null,
-  codexHourlyAutomationStatusLoading = false,
-  codexHourlyAutomationStatusError,
   disabled = false,
   onChange,
 }: VisualConfigEditorProps) {
@@ -207,12 +194,6 @@ export function VisualConfigEditor({
   const isMobile = useMediaQuery('(max-width: 768px)');
   const routingStrategyLabelId = useId();
   const routingStrategyHintId = `${routingStrategyLabelId}-hint`;
-  const codexWeeklyAutomationIntervalId = useId();
-  const codexWeeklyAutomationIntervalHintId = `${codexWeeklyAutomationIntervalId}-hint`;
-  const codexWeeklyAutomationIntervalErrorId = `${codexWeeklyAutomationIntervalId}-error`;
-  const codexHourlyAutomationIntervalId = useId();
-  const codexHourlyAutomationIntervalHintId = `${codexHourlyAutomationIntervalId}-hint`;
-  const codexHourlyAutomationIntervalErrorId = `${codexHourlyAutomationIntervalId}-error`;
   const disableImageGenerationLabelId = useId();
   const disableImageGenerationHintId = `${disableImageGenerationLabelId}-hint`;
   const keepaliveInputId = useId();
@@ -370,14 +351,6 @@ export function VisualConfigEditor({
   const requestRetryError = getValidationMessage(t, validationErrors?.requestRetry);
   const maxRetryCredentialsError = getValidationMessage(t, validationErrors?.maxRetryCredentials);
   const maxRetryIntervalError = getValidationMessage(t, validationErrors?.maxRetryInterval);
-  const codexWeeklyAutomationIntervalError = getValidationMessage(
-    t,
-    validationErrors?.codexWeeklyAutomationIntervalSeconds
-  );
-  const codexHourlyAutomationIntervalError = getValidationMessage(
-    t,
-    validationErrors?.codexHourlyAutomationIntervalSeconds
-  );
   const authAutoRefreshWorkersError = getValidationMessage(
     t,
     validationErrors?.authAutoRefreshWorkers
@@ -391,27 +364,6 @@ export function VisualConfigEditor({
     t,
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
   );
-  const formattedLastCheckedAt = useMemo(() => {
-    if (!codexWeeklyAutomationStatus?.lastCheckedAt) {
-      return t('config_management.visual.sections.quota.codex_weekly_status_waiting');
-    }
-    const parsed = new Date(codexWeeklyAutomationStatus.lastCheckedAt);
-    if (Number.isNaN(parsed.getTime())) {
-      return codexWeeklyAutomationStatus.lastCheckedAt;
-    }
-    return parsed.toLocaleString();
-  }, [codexWeeklyAutomationStatus, t]);
-  const formattedHourlyLastCheckedAt = useMemo(() => {
-    if (!codexHourlyAutomationStatus?.lastCheckedAt) {
-      return t('config_management.visual.sections.quota.codex_hourly_status_waiting');
-    }
-    const parsed = new Date(codexHourlyAutomationStatus.lastCheckedAt);
-    if (Number.isNaN(parsed.getTime())) {
-      return codexHourlyAutomationStatus.lastCheckedAt;
-    }
-    return parsed.toLocaleString();
-  }, [codexHourlyAutomationStatus, t]);
-
   const handleApiKeysTextChange = useCallback(
     (apiKeysText: string) => onChange({ apiKeysText }),
     [onChange]
@@ -505,10 +457,7 @@ export function VisualConfigEditor({
         id: 'quota',
         title: t('config_management.visual.sections.quota.title'),
         icon: IconTimer,
-        errorCount: countErrors([
-          'codexWeeklyAutomationIntervalSeconds',
-          'codexHourlyAutomationIntervalSeconds',
-        ]),
+        errorCount: 0,
       },
       {
         id: 'streaming',
@@ -1424,173 +1373,6 @@ export function VisualConfigEditor({
                   </FieldAnchor>
                 </SectionGrid>
 
-                <SectionSubsection
-                  title={t('config_management.visual.sections.quota.codex_weekly_title')}
-                  description={t('config_management.visual.sections.quota.codex_weekly_desc')}
-                >
-                  <SectionGrid>
-                    <ToggleRow
-                      title={t('config_management.visual.sections.quota.codex_weekly_enabled')}
-                      description={t(
-                        'config_management.visual.sections.quota.codex_weekly_enabled_desc'
-                      )}
-                      checked={values.codexWeeklyAutomationEnabled}
-                      disabled={disabled}
-                      onChange={(codexWeeklyAutomationEnabled) =>
-                        onChange({ codexWeeklyAutomationEnabled })
-                      }
-                    />
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_weekly_interval')}
-                      htmlFor={codexWeeklyAutomationIntervalId}
-                      hint={t('config_management.visual.sections.quota.codex_weekly_interval_desc')}
-                      hintId={codexWeeklyAutomationIntervalHintId}
-                      error={codexWeeklyAutomationIntervalError}
-                      errorId={codexWeeklyAutomationIntervalErrorId}
-                    >
-                      <div className={styles.fieldControl}>
-                        <input
-                          id={codexWeeklyAutomationIntervalId}
-                          className="input"
-                          type="number"
-                          placeholder="300"
-                          value={values.codexWeeklyAutomationIntervalSeconds}
-                          onChange={(e) =>
-                            onChange({
-                              codexWeeklyAutomationIntervalSeconds: e.target.value,
-                            })
-                          }
-                          disabled={disabled}
-                        />
-                      </div>
-                    </FieldShell>
-                  </SectionGrid>
-
-                  <SectionGrid>
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_weekly_status')}
-                    >
-                      <div className={styles.toggleTitle}>
-                        {codexWeeklyAutomationStatusLoading
-                          ? t('config_management.visual.sections.quota.codex_weekly_status_loading')
-                          : codexWeeklyAutomationStatus?.running
-                            ? t(
-                                'config_management.visual.sections.quota.codex_weekly_status_running'
-                              )
-                            : codexWeeklyAutomationStatus?.enabled
-                              ? t(
-                                  'config_management.visual.sections.quota.codex_weekly_status_idle'
-                                )
-                              : t(
-                                  'config_management.visual.sections.quota.codex_weekly_status_disabled'
-                                )}
-                      </div>
-                      {codexWeeklyAutomationStatusError ? (
-                        <div className={styles.toggleDescription}>
-                          {codexWeeklyAutomationStatusError}
-                        </div>
-                      ) : null}
-                    </FieldShell>
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_weekly_last_checked')}
-                    >
-                      <div className={styles.toggleTitle}>{formattedLastCheckedAt}</div>
-                    </FieldShell>
-                    <FieldShell
-                      label={t(
-                        'config_management.visual.sections.quota.codex_weekly_auto_disabled_count'
-                      )}
-                    >
-                      <div className={styles.toggleTitle}>
-                        {codexWeeklyAutomationStatus?.autoDisabledCount ?? 0}
-                      </div>
-                    </FieldShell>
-                  </SectionGrid>
-                </SectionSubsection>
-
-                <SectionSubsection
-                  title={t('config_management.visual.sections.quota.codex_hourly_title')}
-                  description={t('config_management.visual.sections.quota.codex_hourly_desc')}
-                >
-                  <SectionGrid>
-                    <ToggleRow
-                      title={t('config_management.visual.sections.quota.codex_hourly_enabled')}
-                      description={t(
-                        'config_management.visual.sections.quota.codex_hourly_enabled_desc'
-                      )}
-                      checked={values.codexHourlyAutomationEnabled}
-                      disabled={disabled}
-                      onChange={(codexHourlyAutomationEnabled) =>
-                        onChange({ codexHourlyAutomationEnabled })
-                      }
-                    />
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_hourly_interval')}
-                      htmlFor={codexHourlyAutomationIntervalId}
-                      hint={t('config_management.visual.sections.quota.codex_hourly_interval_desc')}
-                      hintId={codexHourlyAutomationIntervalHintId}
-                      error={codexHourlyAutomationIntervalError}
-                      errorId={codexHourlyAutomationIntervalErrorId}
-                    >
-                      <div className={styles.fieldControl}>
-                        <input
-                          id={codexHourlyAutomationIntervalId}
-                          className="input"
-                          type="number"
-                          placeholder="300"
-                          value={values.codexHourlyAutomationIntervalSeconds}
-                          onChange={(e) =>
-                            onChange({
-                              codexHourlyAutomationIntervalSeconds: e.target.value,
-                            })
-                          }
-                          disabled={disabled}
-                        />
-                      </div>
-                    </FieldShell>
-                  </SectionGrid>
-
-                  <SectionGrid>
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_hourly_status')}
-                    >
-                      <div className={styles.toggleTitle}>
-                        {codexHourlyAutomationStatusLoading
-                          ? t('config_management.visual.sections.quota.codex_hourly_status_loading')
-                          : codexHourlyAutomationStatus?.running
-                            ? t(
-                                'config_management.visual.sections.quota.codex_hourly_status_running'
-                              )
-                            : codexHourlyAutomationStatus?.enabled
-                              ? t(
-                                  'config_management.visual.sections.quota.codex_hourly_status_idle'
-                                )
-                              : t(
-                                  'config_management.visual.sections.quota.codex_hourly_status_disabled'
-                                )}
-                      </div>
-                      {codexHourlyAutomationStatusError ? (
-                        <div className={styles.toggleDescription}>
-                          {codexHourlyAutomationStatusError}
-                        </div>
-                      ) : null}
-                    </FieldShell>
-                    <FieldShell
-                      label={t('config_management.visual.sections.quota.codex_hourly_last_checked')}
-                    >
-                      <div className={styles.toggleTitle}>{formattedHourlyLastCheckedAt}</div>
-                    </FieldShell>
-                    <FieldShell
-                      label={t(
-                        'config_management.visual.sections.quota.codex_hourly_auto_disabled_count'
-                      )}
-                    >
-                      <div className={styles.toggleTitle}>
-                        {codexHourlyAutomationStatus?.autoDisabledCount ?? 0}
-                      </div>
-                    </FieldShell>
-                  </SectionGrid>
-                </SectionSubsection>
               </SectionStack>
             </ConfigSection>
 

@@ -35,7 +35,6 @@ export type UseAuthFilesDataResult = {
   deleting: string | null;
   deletingAll: boolean;
   statusUpdating: Record<string, boolean>;
-  codexAutomationUpdating: Record<string, boolean>;
   batchStatusUpdating: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   loadFiles: () => Promise<void>;
@@ -45,7 +44,6 @@ export type UseAuthFilesDataResult = {
   handleDeleteAll: (options: DeleteAllOptions) => void;
   handleDownload: (name: string) => Promise<void>;
   handleStatusToggle: (item: AuthFileItem, enabled: boolean) => Promise<void>;
-  handleCodexAutomationExcludedToggle: (item: AuthFileItem, excluded: boolean) => Promise<void>;
   toggleSelect: (name: string) => void;
   selectAllVisible: (visibleFiles: AuthFileItem[]) => void;
   invertVisibleSelection: (visibleFiles: AuthFileItem[]) => void;
@@ -66,9 +64,6 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
-  const [codexAutomationUpdating, setCodexAutomationUpdating] = useState<Record<string, boolean>>(
-    {}
-  );
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
@@ -469,68 +464,6 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     [showNotification, t]
   );
 
-  const handleCodexAutomationExcludedToggle = useCallback(
-    async (item: AuthFileItem, excluded: boolean) => {
-      const name = item.name;
-      const previousExcluded = Boolean(
-        item['codex_automation_excluded'] ??
-        item.codexAutomationExcluded ??
-        item['codex_weekly_automation_excluded'] ??
-        item.codexWeeklyAutomationExcluded
-      );
-
-      setCodexAutomationUpdating((prev) => ({ ...prev, [name]: true }));
-      setFiles((prev) =>
-        prev.map((file) =>
-          file.name === name
-            ? {
-                ...file,
-                codexAutomationExcluded: excluded,
-                ['codex_automation_excluded']: excluded,
-                // 同步镜像旧字段,避免 UI 读到旧值时状态不一致。
-                codexWeeklyAutomationExcluded: excluded,
-                ['codex_weekly_automation_excluded']: excluded,
-              }
-            : file
-        )
-      );
-
-      try {
-        await authFilesApi.setCodexAutomationExcluded(name, excluded);
-        showNotification(
-          excluded
-            ? t('auth_files.codex_automation_excluded_enabled', { name })
-            : t('auth_files.codex_automation_excluded_disabled', { name }),
-          'success'
-        );
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : '';
-        setFiles((prev) =>
-          prev.map((file) =>
-            file.name === name
-              ? {
-                  ...file,
-                  codexAutomationExcluded: previousExcluded,
-                  ['codex_automation_excluded']: previousExcluded,
-                  codexWeeklyAutomationExcluded: previousExcluded,
-                  ['codex_weekly_automation_excluded']: previousExcluded,
-                }
-              : file
-          )
-        );
-        showNotification(`${t('notification.update_failed')}: ${errorMessage}`, 'error');
-      } finally {
-        setCodexAutomationUpdating((prev) => {
-          if (!prev[name]) return prev;
-          const next = { ...prev };
-          delete next[name];
-          return next;
-        });
-      }
-    },
-    [showNotification, t]
-  );
-
   const batchSetStatus = useCallback(
     async (names: string[], enabled: boolean) => {
       if (batchStatusPendingRef.current) return;
@@ -713,7 +646,6 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     deleting,
     deletingAll,
     statusUpdating,
-    codexAutomationUpdating,
     batchStatusUpdating,
     fileInputRef,
     loadFiles,
@@ -723,7 +655,6 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
-    handleCodexAutomationExcludedToggle,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,

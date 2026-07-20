@@ -313,44 +313,6 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
     };
   }
 
-  const codexWeeklyAutomation = raw['codex-weekly-automation'] ?? raw.codexWeeklyAutomation;
-  if (isRecord(codexWeeklyAutomation)) {
-    const nextConfig: NonNullable<Config['codexWeeklyAutomation']> = {};
-    nextConfig.enabled = normalizeBoolean(
-      codexWeeklyAutomation.enabled ?? codexWeeklyAutomation['enabled']
-    );
-    const intervalRaw =
-      codexWeeklyAutomation['interval-seconds'] ?? codexWeeklyAutomation.intervalSeconds;
-    if (typeof intervalRaw === 'number' && Number.isFinite(intervalRaw)) {
-      nextConfig.intervalSeconds = intervalRaw;
-    } else if (typeof intervalRaw === 'string' && intervalRaw.trim() !== '') {
-      const parsed = Number(intervalRaw);
-      if (Number.isFinite(parsed)) {
-        nextConfig.intervalSeconds = parsed;
-      }
-    }
-    config.codexWeeklyAutomation = nextConfig;
-  }
-
-  const codexHourlyAutomation = raw['codex-hourly-automation'] ?? raw.codexHourlyAutomation;
-  if (isRecord(codexHourlyAutomation)) {
-    const nextConfig: NonNullable<Config['codexHourlyAutomation']> = {};
-    nextConfig.enabled = normalizeBoolean(
-      codexHourlyAutomation.enabled ?? codexHourlyAutomation['enabled']
-    );
-    const intervalRaw =
-      codexHourlyAutomation['interval-seconds'] ?? codexHourlyAutomation.intervalSeconds;
-    if (typeof intervalRaw === 'number' && Number.isFinite(intervalRaw)) {
-      nextConfig.intervalSeconds = intervalRaw;
-    } else if (typeof intervalRaw === 'string' && intervalRaw.trim() !== '') {
-      const parsed = Number(intervalRaw);
-      if (Number.isFinite(parsed)) {
-        nextConfig.intervalSeconds = parsed;
-      }
-    }
-    config.codexHourlyAutomation = nextConfig;
-  }
-
   config.usageStatisticsEnabled = normalizeBoolean(raw['usage-statistics-enabled']);
   config.requestLog = normalizeBoolean(raw['request-log']);
   config.loggingToFile = normalizeBoolean(raw['logging-to-file']);

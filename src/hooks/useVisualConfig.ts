@@ -203,12 +203,6 @@ export function getVisualConfigValidationErrors(
     requestRetry: getNonNegativeIntegerError(values.requestRetry),
     maxRetryCredentials: getNonNegativeIntegerError(values.maxRetryCredentials),
     maxRetryInterval: getNonNegativeIntegerError(values.maxRetryInterval),
-    codexWeeklyAutomationIntervalSeconds: getNonNegativeIntegerError(
-      values.codexWeeklyAutomationIntervalSeconds
-    ),
-    codexHourlyAutomationIntervalSeconds: getNonNegativeIntegerError(
-      values.codexHourlyAutomationIntervalSeconds
-    ),
     authAutoRefreshWorkers: getNonNegativeIntegerError(values.authAutoRefreshWorkers),
     'streaming.keepaliveSeconds': getNonNegativeIntegerError(values.streaming.keepaliveSeconds),
     'streaming.bootstrapRetries': getNonNegativeIntegerError(values.streaming.bootstrapRetries),
@@ -916,32 +910,6 @@ function getNextDirtyFields(
     ] as Array<keyof VisualConfigValues>
   ).forEach(updateScalarDirty);
 
-  if (Object.prototype.hasOwnProperty.call(patch, 'codexWeeklyAutomationEnabled')) {
-    updateDirty(
-      'codexWeeklyAutomationEnabled',
-      nextValues.codexWeeklyAutomationEnabled === baselineValues.codexWeeklyAutomationEnabled
-    );
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'codexWeeklyAutomationIntervalSeconds')) {
-    updateDirty(
-      'codexWeeklyAutomationIntervalSeconds',
-      nextValues.codexWeeklyAutomationIntervalSeconds ===
-        baselineValues.codexWeeklyAutomationIntervalSeconds
-    );
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'codexHourlyAutomationEnabled')) {
-    updateDirty(
-      'codexHourlyAutomationEnabled',
-      nextValues.codexHourlyAutomationEnabled === baselineValues.codexHourlyAutomationEnabled
-    );
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'codexHourlyAutomationIntervalSeconds')) {
-    updateDirty(
-      'codexHourlyAutomationIntervalSeconds',
-      nextValues.codexHourlyAutomationIntervalSeconds ===
-        baselineValues.codexHourlyAutomationIntervalSeconds
-    );
-  }
   if (Object.prototype.hasOwnProperty.call(patch, 'pluginStoreSources')) {
     updateDirty(
       'pluginStoreSources',
@@ -1089,8 +1057,6 @@ export function useVisualConfig() {
       const tls = asRecord(parsed.tls);
       const remoteManagement = asRecord(parsed['remote-management']);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
-      const codexWeeklyAutomation = asRecord(parsed['codex-weekly-automation']);
-      const codexHourlyAutomation = asRecord(parsed['codex-hourly-automation']);
       const routing = asRecord(parsed.routing);
       const payload = asRecord(parsed.payload);
       const streaming = asRecord(parsed.streaming);
@@ -1189,15 +1155,6 @@ export function useVisualConfig() {
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? true),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? true),
         quotaAntigravityCredits: Boolean(quotaExceeded?.['antigravity-credits'] ?? false),
-        codexWeeklyAutomationEnabled: Boolean(codexWeeklyAutomation?.enabled ?? false),
-        codexWeeklyAutomationIntervalSeconds: String(
-          codexWeeklyAutomation?.['interval-seconds'] ?? 300
-        ),
-        codexHourlyAutomationEnabled: Boolean(codexHourlyAutomation?.enabled ?? false),
-        codexHourlyAutomationIntervalSeconds: String(
-          codexHourlyAutomation?.['interval-seconds'] ?? 300
-        ),
-
         routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
         routingSessionAffinity: Boolean(
           routing?.['session-affinity'] ?? routing?.sessionAffinity ?? routing?.['sessionAffinity']
@@ -1506,50 +1463,6 @@ export function useVisualConfig() {
             doc.setIn(['quota-exceeded', 'antigravity-credits'], values.quotaAntigravityCredits);
           }
           deleteIfMapEmpty(doc, ['quota-exceeded']);
-        }
-
-        const codexWeeklyAutomationDirty =
-          dirtyFields.has('codexWeeklyAutomationEnabled') ||
-          dirtyFields.has('codexWeeklyAutomationIntervalSeconds');
-        if (codexWeeklyAutomationDirty) {
-          ensureMapInDoc(doc, ['codex-weekly-automation']);
-          if (dirtyFields.has('codexWeeklyAutomationEnabled')) {
-            setBooleanInDoc(
-              doc,
-              ['codex-weekly-automation', 'enabled'],
-              values.codexWeeklyAutomationEnabled
-            );
-          }
-          if (dirtyFields.has('codexWeeklyAutomationIntervalSeconds')) {
-            setIntFromStringInDoc(
-              doc,
-              ['codex-weekly-automation', 'interval-seconds'],
-              values.codexWeeklyAutomationIntervalSeconds
-            );
-          }
-          deleteIfMapEmpty(doc, ['codex-weekly-automation']);
-        }
-
-        const codexHourlyAutomationDirty =
-          dirtyFields.has('codexHourlyAutomationEnabled') ||
-          dirtyFields.has('codexHourlyAutomationIntervalSeconds');
-        if (codexHourlyAutomationDirty) {
-          ensureMapInDoc(doc, ['codex-hourly-automation']);
-          if (dirtyFields.has('codexHourlyAutomationEnabled')) {
-            setBooleanInDoc(
-              doc,
-              ['codex-hourly-automation', 'enabled'],
-              values.codexHourlyAutomationEnabled
-            );
-          }
-          if (dirtyFields.has('codexHourlyAutomationIntervalSeconds')) {
-            setIntFromStringInDoc(
-              doc,
-              ['codex-hourly-automation', 'interval-seconds'],
-              values.codexHourlyAutomationIntervalSeconds
-            );
-          }
-          deleteIfMapEmpty(doc, ['codex-hourly-automation']);
         }
 
         const routingDirty =

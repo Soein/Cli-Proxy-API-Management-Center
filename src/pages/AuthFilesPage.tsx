@@ -131,7 +131,6 @@ export function AuthFilesPage() {
     deleting,
     deletingAll,
     statusUpdating,
-    codexAutomationUpdating,
     batchStatusUpdating,
     fileInputRef,
     loadFiles,
@@ -141,7 +140,6 @@ export function AuthFilesPage() {
     handleDeleteAll,
     handleDownload,
     handleStatusToggle,
-    handleCodexAutomationExcludedToggle,
     toggleSelect,
     selectAllVisible,
     invertVisibleSelection,
@@ -834,7 +832,6 @@ export function AuthFilesPage() {
                     disableControls={disableControls}
                     deleting={deleting}
                     statusUpdating={statusUpdating}
-                    codexAutomationUpdating={codexAutomationUpdating}
                     quotaFilterType={quotaFilterType}
                     statusBarCache={statusBarCache}
                     onShowModels={showModels}
@@ -842,7 +839,6 @@ export function AuthFilesPage() {
                     onOpenPrefixProxyEditor={openPrefixProxyEditor}
                     onDelete={handleDelete}
                     onToggleStatus={handleStatusToggle}
-                    onToggleCodexAutomationExcluded={handleCodexAutomationExcludedToggle}
                     onToggleSelect={toggleSelect}
                   />
                 ))}
