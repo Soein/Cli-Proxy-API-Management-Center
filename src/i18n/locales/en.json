@@ -444,6 +444,8 @@
     "plan_label": "Plan",
     "plan_supergrok": "SuperGrok",
     "plan_supergrok_heavy": "SuperGrok Heavy",
+    "plan_paid": "Paid",
+    "paid_health": "Paid API chat is available. xAI does not expose quota totals for this OAuth credential.",
     "pay_as_you_go_label": "Pay as you go",
     "pay_as_you_go_enabled": "Enabled, cap {{cap}}",
     "pay_as_you_go_disabled": "Disabled"
@@ -1026,9 +1028,7 @@
           "timeout": "Timeout",
           "stabilize_device": "Stabilize Device Profile",
           "stabilize_device_desc": "Pin OS/Arch and stabilize the software fingerprint per credential/API key",
-          "beta_features": "Beta Features",
-          "codex_identity_confuse": "Codex Identity Confuse",
-          "codex_identity_confuse_desc": "When fill-first routing or session affinity is used, remap Codex prompt_cache_key and installation identity for the selected auth"
+          "beta_features": "Beta Features"
         },
         "network": {
           "title": "Network Configuration",
@@ -1411,7 +1411,11 @@
   },
   "sidebar": {
     "toggle_expand": "Expand sidebar",
-    "toggle_collapse": "Collapse sidebar"
+    "toggle_collapse": "Collapse sidebar",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "subtitle": "CLI Proxy API Console",
+    "auth_files_count": "Authentication files: {{count}}"
   },
   "footer": {
     "api_version": "CLI Proxy API Version",
