@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authFilesApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useModelsStore } from '@/stores';
 import { useApiKeysForModels } from '@/hooks/useApiKeysForModels';
@@ -10,6 +10,7 @@ import {
 } from '@/utils/recentRequests';
 import type { Config } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
+import { createRequestGate } from '@/utils/requestGate';
 import {
   TRAFFIC_BUCKET_MINUTES,
   type CredentialHealth,
@@ -117,6 +118,7 @@ export const getProviderKeyCounts = (config: Config) => ({
 export function useDashboardOverview() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const apiBase = useAuthStore((state) => state.apiBase);
+  const managementKey = useAuthStore((state) => state.managementKey);
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
 
@@ -134,19 +136,40 @@ export function useDashboardOverview() {
 
   const [authFiles, setAuthFiles] = useState<AuthFileItem[] | null>(null);
   const [authFilesLoading, setAuthFilesLoading] = useState(false);
+  const authFilesRequestGateRef = useRef(createRequestGate());
+  const authFilesScope = `${apiBase}\u0000${managementKey}`;
+
+  useEffect(() => {
+    const requestGate = authFilesRequestGateRef.current;
+    requestGate.invalidate('auth-files');
+    if (!connected) {
+      setAuthFiles(null);
+      setAuthFilesLoading(false);
+    }
+  }, [authFilesScope, connected]);
 
   const loadAuthFiles = useCallback(async () => {
     if (!connected) return;
+    const requestScope = authFilesScope;
+    const requestToken = authFilesRequestGateRef.current.begin('auth-files');
+    const isRequestCurrent = () => {
+      const authState = useAuthStore.getState();
+      const currentScope = `${authState.apiBase}\u0000${authState.managementKey}`;
+      return (
+        currentScope === requestScope && authFilesRequestGateRef.current.isCurrent(requestToken)
+      );
+    };
+
     setAuthFilesLoading(true);
     try {
       const response = await authFilesApi.list();
-      setAuthFiles(response.files);
+      if (isRequestCurrent()) setAuthFiles(response.files);
     } catch {
-      setAuthFiles(null);
+      if (isRequestCurrent()) setAuthFiles(null);
     } finally {
-      setAuthFilesLoading(false);
+      if (isRequestCurrent()) setAuthFilesLoading(false);
     }
-  }, [connected]);
+  }, [authFilesScope, connected]);
 
   const loadModels = useCallback(async () => {
     if (!connected || !apiBase) return;
@@ -160,9 +183,11 @@ export function useDashboardOverview() {
 
   useEffect(() => {
     if (!connected) return;
+    const requestGate = authFilesRequestGateRef.current;
     void fetchConfig().catch(() => undefined);
     void loadAuthFiles();
     void loadModels();
+    return () => requestGate.invalidate('auth-files');
   }, [connected, fetchConfig, loadAuthFiles, loadModels]);
 
   const refresh = useCallback(async () => {

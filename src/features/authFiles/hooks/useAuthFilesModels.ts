@@ -4,6 +4,7 @@ import { authFilesApi } from '@/services/api';
 import { useNotificationStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import type { AuthFileModelItem } from '@/features/authFiles/constants';
+import { createRequestGate } from '@/utils/requestGate';
 
 type ModelsError = 'unsupported' | null;
 
@@ -33,6 +34,7 @@ export function useAuthFilesModels(): UseAuthFilesModelsResult {
   const modelsCacheRef = useRef<Map<string, AuthFileModelItem[]>>(new Map());
   const modelsCacheVersionRef = useRef(0);
   const modelsFileVersionRef = useRef<Map<string, number>>(new Map());
+  const modelsRequestGateRef = useRef(createRequestGate());
   const activeModelsRequestIdRef = useRef(0);
 
   const closeModelsModal = useCallback(() => {
@@ -43,12 +45,14 @@ export function useAuthFilesModels(): UseAuthFilesModelsResult {
 
   const invalidateModels = useCallback((names?: string[]) => {
     if (!names) {
+      modelsRequestGateRef.current.invalidateAll();
       modelsCacheRef.current.clear();
       modelsFileVersionRef.current.clear();
       modelsCacheVersionRef.current += 1;
       return;
     }
     new Set(names.map((name) => name.trim()).filter(Boolean)).forEach((name) => {
+      modelsRequestGateRef.current.invalidate(name);
       modelsCacheRef.current.delete(name);
       modelsFileVersionRef.current.set(name, (modelsFileVersionRef.current.get(name) ?? 0) + 1);
     });
@@ -58,6 +62,7 @@ export function useAuthFilesModels(): UseAuthFilesModelsResult {
     async (item: AuthFileItem) => {
       const cacheKey = item.name.trim();
       const requestId = ++activeModelsRequestIdRef.current;
+      const requestToken = modelsRequestGateRef.current.begin(cacheKey);
 
       setModelsFileName(item.name);
       setModelsFileType(item.type || '');
@@ -78,16 +83,17 @@ export function useAuthFilesModels(): UseAuthFilesModelsResult {
         cacheVersion === modelsCacheVersionRef.current &&
         fileVersion === (modelsFileVersionRef.current.get(cacheKey) ?? 0);
       const isRequestCurrent = () => requestId === activeModelsRequestIdRef.current;
+      const isFileRequestCurrent = () => modelsRequestGateRef.current.isCurrent(requestToken);
 
       setModelsLoading(true);
       try {
         const models = await authFilesApi.getModelsForAuthFile(item.name);
-        if (isCacheCurrent()) {
+        if (isCacheCurrent() && isFileRequestCurrent()) {
           modelsCacheRef.current.set(cacheKey, models);
           if (isRequestCurrent()) setModelsList(models);
         }
       } catch (err) {
-        if (!isRequestCurrent() || !isCacheCurrent()) return;
+        if (!isRequestCurrent() || !isCacheCurrent() || !isFileRequestCurrent()) return;
         const errorMessage = err instanceof Error ? err.message : '';
         if (
           errorMessage.includes('404') ||

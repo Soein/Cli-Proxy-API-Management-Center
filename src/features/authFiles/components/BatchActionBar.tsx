@@ -18,6 +18,7 @@ export type BatchActionBarProps = {
   selectableFilteredCount: number;
   disableControls: boolean;
   batchStatusDisabled: boolean;
+  batchDownloading: boolean;
   onSelectPage: () => void;
   onSelectFiltered: () => void;
   onInvertPage: () => void;
@@ -41,6 +42,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
     selectableFilteredCount,
     disableControls,
     batchStatusDisabled,
+    batchDownloading,
     onSelectPage,
     onSelectFiltered,
     onInvertPage,
@@ -149,6 +151,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
         role="toolbar"
         aria-label={t('auth_files.batch_toolbar_label')}
         aria-orientation="horizontal"
+        aria-busy={batchDownloading}
       >
         <div className={styles.left}>
           <span className={styles.count} aria-live="polite">
@@ -158,7 +161,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
             variant="secondary"
             size="sm"
             onClick={onSelectPage}
-            disabled={selectablePageCount === 0}
+            disabled={batchDownloading || selectablePageCount === 0}
           >
             {t('auth_files.batch_select_page')}
           </Button>
@@ -166,7 +169,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
             variant="secondary"
             size="sm"
             onClick={onSelectFiltered}
-            disabled={selectableFilteredCount === 0}
+            disabled={batchDownloading || selectableFilteredCount === 0}
           >
             {t('auth_files.batch_select_filtered')}
           </Button>
@@ -174,11 +177,11 @@ export function BatchActionBar(props: BatchActionBarProps) {
             variant="ghost"
             size="sm"
             onClick={onInvertPage}
-            disabled={selectablePageCount === 0}
+            disabled={batchDownloading || selectablePageCount === 0}
           >
             {t('auth_files.batch_invert_page')}
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDeselectAll}>
+          <Button variant="ghost" size="sm" onClick={onDeselectAll} disabled={batchDownloading}>
             {t('auth_files.batch_deselect')}
           </Button>
         </div>
@@ -187,7 +190,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
             variant="secondary"
             size="sm"
             onClick={onDownload}
-            disabled={disableControls || selectionCount === 0}
+            disabled={disableControls || batchDownloading || selectionCount === 0}
           >
             {t('auth_files.batch_download')}
           </Button>
@@ -201,7 +204,7 @@ export function BatchActionBar(props: BatchActionBarProps) {
             variant="danger"
             size="sm"
             onClick={onDelete}
-            disabled={disableControls || selectionCount === 0}
+            disabled={disableControls || batchDownloading || selectionCount === 0}
           >
             {t('common.delete')}
           </Button>

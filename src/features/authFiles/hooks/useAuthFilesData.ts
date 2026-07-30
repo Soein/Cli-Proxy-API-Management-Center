@@ -7,6 +7,7 @@ import type { AuthFileItem } from '@/types';
 import { formatFileSize } from '@/utils/format';
 import { MAX_AUTH_FILE_SIZE } from '@/utils/constants';
 import { downloadBlob } from '@/utils/download';
+import { reconcileBatchDownloadSelection } from '@/features/authFiles/batchDownload';
 import {
   getTypeLabel,
   isProblemAuthFile,
@@ -49,6 +50,7 @@ export type UseAuthFilesDataResult = {
   statusUpdating: Record<string, boolean>;
   manualRefreshing: Record<string, boolean>;
   batchStatusUpdating: boolean;
+  batchDownloading: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   loadFiles: (options?: LoadFilesOptions) => Promise<void>;
   handleUploadClick: () => void;
@@ -82,12 +84,14 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
   const [statusUpdating, setStatusUpdating] = useState<Record<string, boolean>>({});
   const [manualRefreshing, setManualRefreshing] = useState<Record<string, boolean>>({});
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadPendingRef = useRef(false);
   const manualRefreshPendingRef = useRef<Set<string>>(new Set());
   const batchStatusPendingRef = useRef(false);
+  const batchDownloadPendingRef = useRef(false);
   /** 列表请求代号：变更操作会使在途响应过期，防止旧轮询复活已删/已改文件。 */
   const loadRequestIdRef = useRef(0);
   const invalidateInFlightLoads = useCallback(() => {
@@ -147,28 +151,31 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
     setSelectedFiles(new Set());
   }, []);
 
-  const applyDeletedFiles = useCallback((names: string[]) => {
-    const deletedNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
-    if (deletedNames.length === 0) return;
+  const applyDeletedFiles = useCallback(
+    (names: string[]) => {
+      const deletedNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+      if (deletedNames.length === 0) return;
 
-    invalidateInFlightLoads();
-    onFilesMutatedRef.current?.(deletedNames);
-    const deletedSet = new Set(deletedNames);
-    setFiles((prev) => prev.filter((file) => !deletedSet.has(file.name)));
-    setSelectedFiles((prev) => {
-      if (prev.size === 0) return prev;
-      let changed = false;
-      const next = new Set<string>();
-      prev.forEach((name) => {
-        if (deletedSet.has(name)) {
-          changed = true;
-        } else {
-          next.add(name);
-        }
+      invalidateInFlightLoads();
+      onFilesMutatedRef.current?.(deletedNames);
+      const deletedSet = new Set(deletedNames);
+      setFiles((prev) => prev.filter((file) => !deletedSet.has(file.name)));
+      setSelectedFiles((prev) => {
+        if (prev.size === 0) return prev;
+        let changed = false;
+        const next = new Set<string>();
+        prev.forEach((name) => {
+          if (deletedSet.has(name)) {
+            changed = true;
+          } else {
+            next.add(name);
+          }
+        });
+        return changed ? next : prev;
       });
-      return changed ? next : prev;
-    });
-  }, [invalidateInFlightLoads]);
+    },
+    [invalidateInFlightLoads]
+  );
 
   useEffect(() => {
     if (selectedFiles.size === 0) return;
@@ -468,7 +475,15 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
         },
       });
     },
-    [applyDeletedFiles, deselectAll, files, invalidateInFlightLoads, showConfirmation, showNotification, t]
+    [
+      applyDeletedFiles,
+      deselectAll,
+      files,
+      invalidateInFlightLoads,
+      showConfirmation,
+      showNotification,
+      t,
+    ]
   );
 
   const handleDownload = useCallback(
@@ -662,38 +677,50 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
 
   const batchDownload = useCallback(
     async (names: string[]) => {
+      if (batchDownloadPendingRef.current) return;
       const uniqueNames = Array.from(new Set(names));
       if (uniqueNames.length === 0) return;
 
       let successCount = 0;
-      let failCount = 0;
+      const failedNames: string[] = [];
 
-      for (const name of uniqueNames) {
-        try {
-          const blob = await authFilesApi.download(name);
-          downloadBlob({ filename: name, blob });
-          successCount++;
-        } catch {
-          failCount++;
+      batchDownloadPendingRef.current = true;
+      setBatchDownloading(true);
+      try {
+        for (const name of uniqueNames) {
+          try {
+            const blob = await authFilesApi.download(name);
+            downloadBlob({ filename: name, blob });
+            successCount++;
+          } catch {
+            failedNames.push(name);
+          }
         }
-      }
 
-      if (failCount === 0) {
-        showNotification(
-          t('auth_files.batch_download_success', { count: successCount }),
-          'success'
-        );
-      } else {
-        showNotification(
-          t('auth_files.batch_download_partial', { success: successCount, failed: failCount }),
-          'warning'
-        );
-      }
+        if (failedNames.length === 0) {
+          showNotification(
+            t('auth_files.batch_download_success', { count: successCount }),
+            'success'
+          );
+        } else {
+          showNotification(
+            t('auth_files.batch_download_partial', {
+              success: successCount,
+              failed: failedNames.length,
+            }),
+            'warning'
+          );
+        }
 
-      // 与 batchSetStatus 保持一致：批量动作完成后清空选择
-      deselectAll();
+        setSelectedFiles((current) =>
+          reconcileBatchDownloadSelection(current, uniqueNames, failedNames)
+        );
+      } finally {
+        batchDownloadPendingRef.current = false;
+        setBatchDownloading(false);
+      }
     },
-    [deselectAll, showNotification, t]
+    [showNotification, t]
   );
 
   const batchDelete = useCallback(
@@ -750,6 +777,7 @@ export function useAuthFilesData(options?: UseAuthFilesDataOptions): UseAuthFile
     statusUpdating,
     manualRefreshing,
     batchStatusUpdating,
+    batchDownloading,
     fileInputRef,
     loadFiles,
     handleUploadClick,

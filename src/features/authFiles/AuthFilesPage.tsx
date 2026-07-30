@@ -129,6 +129,7 @@ export function AuthFilesPage() {
     statusUpdating,
     manualRefreshing,
     batchStatusUpdating,
+    batchDownloading,
     fileInputRef,
     loadFiles,
     handleUploadClick,
@@ -177,6 +178,7 @@ export function AuthFilesPage() {
   } = useAuthFilesPrefixProxyEditor({
     disableControls: connectionStatus !== 'connected',
     loadFiles,
+    onFileMutated: (name) => invalidateDerivedCaches([name]),
   });
 
   const disableControls = connectionStatus !== 'connected';
@@ -492,14 +494,12 @@ export function AuthFilesPage() {
     disableControls ||
     selectedNames.length === 0 ||
     batchStatusUpdating ||
+    batchDownloading ||
     selectedHasStatusUpdating;
 
   /* ---------- 头部遥测计数 ---------- */
 
-  const activeCount = useMemo(
-    () => files.filter((file) => file.disabled !== true).length,
-    [files]
-  );
+  const activeCount = useMemo(() => files.filter((file) => file.disabled !== true).length, [files]);
   const problemCount = useMemo(() => files.filter(isProblemAuthFile).length, [files]);
 
   /* ---------- 首屏卡片一次性级联入场 ----------
@@ -508,8 +508,7 @@ export function AuthFilesPage() {
    * 而过滤/翻页/轮询新挂载的卡片拿到 null——不重播。 */
 
   const [cardsAnimated, setCardsAnimated] = useState(false);
-  const enableCardEntrance =
-    !cardsAnimated && isCurrentLayer && !loading && pageItems.length > 0;
+  const enableCardEntrance = !cardsAnimated && isCurrentLayer && !loading && pageItems.length > 0;
   useEffect(() => {
     if (enableCardEntrance) {
       setCardsAnimated(true);
@@ -829,6 +828,7 @@ export function AuthFilesPage() {
         selectableFilteredCount={selectableFilteredItems.length}
         disableControls={disableControls}
         batchStatusDisabled={batchStatusButtonsDisabled}
+        batchDownloading={batchDownloading}
         onSelectPage={() => selectAllVisible(pageItems)}
         onSelectFiltered={() => selectAllVisible(sorted)}
         onInvertPage={() => invertVisibleSelection(pageItems)}

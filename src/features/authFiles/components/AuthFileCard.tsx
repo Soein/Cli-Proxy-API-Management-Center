@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useId, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -150,9 +150,10 @@ export function AuthFileCard(props: AuthFileCardProps) {
     mountEntranceDelayMs != null
       ? ({ '--card-delay': `${mountEntranceDelayMs}ms` } as CSSProperties)
       : undefined;
+  const fileNameId = useId();
 
   return (
-    <article className={cardClasses} style={cardStyle}>
+    <article className={cardClasses} style={cardStyle} aria-labelledby={fileNameId}>
       <header className={styles.head}>
         {!isRuntimeOnly && (
           <SelectionCheckbox
@@ -203,7 +204,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
               {stateLabel}
             </span>
           </div>
-          <span className={styles.fileName} title={file.name}>
+          <span id={fileNameId} className={styles.fileName} title={file.name}>
             {file.name}
           </span>
         </div>
