@@ -33,6 +33,7 @@ import {
   type QuotaProviderType,
   type ResolvedTheme,
 } from '@/features/authFiles/constants';
+import { deriveAuthFileIdentity } from '@/features/authFiles/identity';
 import type { AuthFileStatusBarData } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { AuthFileQuotaSection } from '@/features/authFiles/components/AuthFileQuotaSection';
 import styles from './AuthFileCard.module.scss';
@@ -117,6 +118,8 @@ export function AuthFileCard(props: AuthFileCardProps) {
   const priorityValue = Number.isSafeInteger(file.priority) ? file.priority : undefined;
   const weightValue = Number.isSafeInteger(file.weight) ? file.weight : undefined;
   const noteValue = typeof file.note === 'string' ? file.note.trim() : '';
+  // 主行显示账号（email/项目 ID），文件名降为满卡宽的 mono 副行
+  const identity = deriveAuthFileIdentity(file);
 
   const stateLabel = isRuntimeOnly
     ? t('auth_files.type_virtual')
@@ -150,10 +153,10 @@ export function AuthFileCard(props: AuthFileCardProps) {
     mountEntranceDelayMs != null
       ? ({ '--card-delay': `${mountEntranceDelayMs}ms` } as CSSProperties)
       : undefined;
-  const fileNameId = useId();
+  const identityId = useId();
 
   return (
-    <article className={cardClasses} style={cardStyle} aria-labelledby={fileNameId}>
+    <article className={cardClasses} style={cardStyle} aria-labelledby={identityId}>
       <header className={styles.head}>
         {!isRuntimeOnly && (
           <SelectionCheckbox
@@ -204,11 +207,21 @@ export function AuthFileCard(props: AuthFileCardProps) {
               {stateLabel}
             </span>
           </div>
-          <span id={fileNameId} className={styles.fileName} title={file.name}>
-            {file.name}
+          <span
+            id={identityId}
+            className={`${styles.account} ${identity.kind === 'fileName' ? styles.accountMono : ''}`}
+            title={identity.primary}
+          >
+            {identity.primary}
           </span>
         </div>
       </header>
+
+      {identity.secondary && (
+        <p className={styles.fileName} title={identity.fullName}>
+          {identity.secondary}
+        </p>
+      )}
 
       {!compact && noteValue && (
         <p className={styles.note} title={noteValue}>
