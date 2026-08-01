@@ -4,7 +4,7 @@
  * generation-guarded commit、成功/失败通知），仅把 config 换成 adapter。
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   captureQuotaCacheGeneration,
@@ -14,6 +14,7 @@ import {
 import type { AuthFileItem } from '@/types';
 import { getStatusFromError } from '@/utils/quota';
 import { getQuotaMap, getQuotaSetter, type QuotaAdapter, type QuotaCardState } from '../providers';
+import { createQuotaResetGuard } from '../resetGuard';
 
 const getQuotaState = (adapter: QuotaAdapter, name: string): QuotaCardState | undefined =>
   getQuotaMap(adapter)[name];
@@ -22,12 +23,20 @@ export function useQuotaActions(disableControls: boolean) {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
-  const [resettingQuotaName, setResettingQuotaName] = useState<string | null>(null);
+  const resetGuardRef = useRef(createQuotaResetGuard());
+  const disableControlsRef = useRef(disableControls);
+  const [resettingQuotaNames, setResettingQuotaNames] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+
+  useEffect(() => {
+    disableControlsRef.current = disableControls;
+  }, [disableControls]);
 
   const refreshQuota = useCallback(
     async (file: AuthFileItem, adapter: QuotaAdapter) => {
       if (disableControls || file.disabled) return;
-      if (resettingQuotaName === file.name) return;
+      if (resetGuardRef.current.isActive(file.name)) return;
       if (getQuotaState(adapter, file.name)?.status === 'loading') return;
       const cacheGeneration = captureQuotaCacheGeneration();
       const setQuota = getQuotaSetter(adapter);
@@ -61,7 +70,7 @@ export function useQuotaActions(disableControls: boolean) {
         });
       }
     },
-    [disableControls, resettingQuotaName, showNotification, t]
+    [disableControls, showNotification, t]
   );
 
   const resetQuota = useCallback(
@@ -70,7 +79,7 @@ export function useQuotaActions(disableControls: boolean) {
       if (!resetQuotaFn) return;
       if (disableControls || file.disabled) return;
       if (getQuotaState(adapter, file.name)?.status === 'loading') return;
-      if (resettingQuotaName === file.name) return;
+      if (resetGuardRef.current.isActive(file.name)) return;
 
       showConfirmation({
         title: t('codex_quota.reset_confirm_title'),
@@ -78,9 +87,17 @@ export function useQuotaActions(disableControls: boolean) {
         confirmText: t('codex_quota.reset_confirm_button'),
         variant: 'primary',
         onConfirm: async () => {
+          if (disableControlsRef.current || file.disabled) return;
+          const currentQuota = getQuotaState(adapter, file.name);
+          if (currentQuota?.status === 'loading') return;
+          if (adapter.canResetQuota && (!currentQuota || !adapter.canResetQuota(currentQuota))) {
+            return;
+          }
+          if (!resetGuardRef.current.tryBegin(file.name)) return;
+
           const cacheGeneration = captureQuotaCacheGeneration();
           const setQuota = getQuotaSetter(adapter);
-          setResettingQuotaName(file.name);
+          setResettingQuotaNames(resetGuardRef.current.snapshot());
           try {
             const data = await resetQuotaFn(file, t);
             commitIfQuotaCacheCurrent(cacheGeneration, () => {
@@ -99,13 +116,19 @@ export function useQuotaActions(disableControls: boolean) {
               );
             });
           } finally {
-            setResettingQuotaName((current) => (current === file.name ? null : current));
+            resetGuardRef.current.finish(file.name);
+            setResettingQuotaNames(resetGuardRef.current.snapshot());
           }
         },
       });
     },
-    [disableControls, resettingQuotaName, showConfirmation, showNotification, t]
+    [disableControls, showConfirmation, showNotification, t]
   );
 
-  return { resettingQuotaName, refreshQuota, resetQuota };
+  const isResettingQuota = useCallback(
+    (name: string) => resettingQuotaNames.has(name),
+    [resettingQuotaNames]
+  );
+
+  return { isResettingQuota, refreshQuota, resetQuota };
 }

@@ -18,6 +18,7 @@ import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useRevealGroup } from '@/hooks/motion';
 import { useAuthStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem, ResolvedTheme } from '@/types';
+import { createRequestGate } from '@/utils/requestGate';
 import { ProviderTabs } from '@/features/authFiles/components/ProviderTabs';
 import { QuotaHeader } from './components/QuotaHeader';
 import { QuotaCard } from './components/QuotaCard';
@@ -61,6 +62,7 @@ export function QuotaPage() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState<QuotaTabId>(() => readQuotaUiState()?.tab ?? 'all');
   const [page, setPage] = useState(1);
+  const filesRequestGateRef = useRef(createRequestGate());
   // 页头 + tabs 的入场级联（标题 → meta → 动作 → tabs，级差 70ms）
   const revealRef = useRevealGroup<HTMLDivElement>();
 
@@ -69,16 +71,21 @@ export function QuotaPage() {
   /* ---------- 文件列表 ---------- */
 
   const loadFiles = useCallback(async () => {
+    const requestToken = filesRequestGateRef.current.begin('files');
     setLoading(true);
     setError('');
     try {
       const data = await authFilesApi.list();
+      if (!filesRequestGateRef.current.isCurrent(requestToken)) return;
       setFiles(data?.files || []);
     } catch (err: unknown) {
+      if (!filesRequestGateRef.current.isCurrent(requestToken)) return;
       const message = err instanceof Error ? err.message : t('notification.refresh_failed');
       setError(message);
     } finally {
-      setLoading(false);
+      if (filesRequestGateRef.current.isCurrent(requestToken)) {
+        setLoading(false);
+      }
     }
   }, [t]);
 
@@ -86,6 +93,8 @@ export function QuotaPage() {
 
   useEffect(() => {
     void loadFiles();
+    const requestGate = filesRequestGateRef.current;
+    return () => requestGate.invalidateAll();
   }, [loadFiles]);
 
   /* ---------- 归类 / 过滤 / 分页 ---------- */
@@ -164,7 +173,7 @@ export function QuotaPage() {
   /* ---------- 加载与操作 ---------- */
 
   const { batchLoading, loadQuota } = useQuotaBatchLoader();
-  const { resettingQuotaName, refreshQuota, resetQuota } = useQuotaActions(disableControls);
+  const { isResettingQuota, refreshQuota, resetQuota } = useQuotaActions(disableControls);
 
   const pendingRefreshRef = useRef(false);
   const prevLoadingRef = useRef(loading);
@@ -275,7 +284,7 @@ export function QuotaPage() {
                 quota={getQuota(entry)}
                 resolvedTheme={resolvedTheme}
                 canRefresh={canUseActions && !entry.file.disabled}
-                resetting={resettingQuotaName === entry.file.name}
+                resetting={isResettingQuota(entry.file.name)}
                 entranceDelayMs={cardEntranceDelay(index)}
                 onRefresh={() => void refreshQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
                 onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
