@@ -345,6 +345,8 @@
     "weight_hint": "預設值為 1；小於或等於 0 時不參與加權調度；最大值為 1,000,000。",
     "weight_invalid_integer": "權重必須是整數。",
     "weight_invalid_max": "權重不能超過 1,000,000。",
+    "disable_cooling_label": "停用指數冷卻（disable_cooling）",
+    "disable_cooling_hint": "開啟後，僅目前憑證會略過失敗後的冷卻與指數退避；其他憑證不受影響。",
     "websockets_label": "WebSockets（websockets）",
     "websockets_hint": "為該憑證開啟 Responses API 的 websocket 傳輸。",
     "using_api_label": "使用官方 API（using_api）",
@@ -457,7 +459,7 @@
     "plan_label": "方案",
     "expires_label": "續期時間",
     "reset_credits_label": "主動重置次數",
-    "reset_credits_expiry_label": "主動重置過期時間（GMT+8）",
+    "reset_credits_expiry_label": "主動重置過期時間（{{timezone}}）",
     "reset_credit_number": "第 {{index}} 次",
     "reset_credits_expiry_failed": "主動重置過期時間取得失敗：{{message}}",
     "reset_credits_invalid_payload": "主動重置過期時間回應格式無效",
@@ -971,6 +973,21 @@
   },
   "config_management": {
     "title": "設定面板",
+    "meta_fields": "{{count}} 項設定",
+    "meta_dirty": "{{count}} 項待儲存",
+    "meta_dirty_source": "原始碼有未儲存修改",
+    "meta_errors": "{{count}} 項驗證錯誤",
+    "meta_synced": "已同步",
+    "actions": {
+      "discard": "放棄變更",
+      "save": "儲存變更"
+    },
+    "discard_confirm_message": "確定放棄所有未儲存的變更並還原到最近的伺服器版本嗎？",
+    "mode": {
+      "label": "編輯模式",
+      "visual": "視覺化",
+      "source": "原始碼"
+    },
     "reload": "重新載入",
     "reload_confirm_message": "重新載入將捨棄你目前未儲存的修改，確定繼續嗎？",
     "save": "儲存",
@@ -1004,26 +1021,16 @@
       "confirm": "確認儲存",
       "no_changes": "未偵測到變更"
     },
-    "tabs": {
-      "visual": "視覺化編輯",
-      "source": "原始檔編輯"
-    },
     "visual": {
-      "notice": "視覺化模式涵蓋常用欄位，未涵蓋的設定仍需在原始檔模式中查看或編輯。",
-      "quick_jump": "快速跳轉",
-      "mode": {
-        "simple": "簡單",
-        "full": "完整",
-        "label": "編輯模式",
-        "more_settings": "切換到完整模式，檢視全部 {{total}} 個設定分區",
-        "validation_banner": "部分進階設定項存在驗證錯誤，已阻止儲存。請切換到完整模式進行修正。",
-        "switch_to_full": "切換完整模式"
-      },
       "search": {
         "placeholder": "搜尋設定項（標籤或 YAML 鍵名）",
         "no_results": "沒有符合的設定項"
       },
       "sections": {
+        "common": {
+          "title": "常用",
+          "description": "最常調整的設定項，與完整分區共享同一份資料"
+        },
         "connectivity": {
           "title": "接入與認證",
           "description": "服務位址、連接埠、認證目錄與 API 金鑰"
@@ -1039,8 +1046,6 @@
           "signature_title": "Antigravity 簽章"
         },
         "server": {
-          "title": "伺服器設定",
-          "description": "基本伺服器設定",
           "host": "主機位址",
           "port": "連接埠"
         },
@@ -1066,14 +1071,10 @@
           "panel_repo": "面板儲存庫"
         },
         "auth": {
-          "title": "驗證設定",
-          "description": "API 金鑰與驗證檔案目錄設定",
           "auth_dir": "驗證檔案目錄（auth-dir）",
           "auth_dir_hint": "存放驗證檔案的目錄路徑（支援 ~）"
         },
         "system": {
-          "title": "系統設定",
-          "description": "除錯、記錄、統計與效能調整設定",
           "debug": "除錯模式",
           "debug_desc": "啟用詳細的除錯記錄",
           "commercial_mode": "商業模式",
@@ -1218,7 +1219,15 @@
         "input_placeholder": "貼上你的 API 金鑰",
         "input_hint": "此處僅修改本地設定檔內容，不會自動同步到 API 金鑰管理介面",
         "error_empty": "請輸入 API 金鑰",
-        "error_invalid": "API 金鑰包含無效字元"
+        "error_invalid": "API 金鑰包含無效字元",
+        "strength": {
+          "label": "API 金鑰強度",
+          "empty": "待輸入",
+          "weak": "弱",
+          "fair": "一般",
+          "good": "良好",
+          "strong": "很強"
+        }
       },
       "payload_rules": {
         "rule": "規則",
@@ -1292,6 +1301,9 @@
     "title": "配額管理",
     "description": "集中查看 OAuth 配額與剩餘情況",
     "refresh_all_credentials": "重新整理全部憑證",
+    "sort_label": "排序",
+    "sort_default": "預設",
+    "sort_soonest": "最快恢復優先",
     "meta_credentials": "{{count}} 個憑證",
     "meta_loaded": "{{count}} 個已載入",
     "meta_attention": "{{count}} 個需關注",
@@ -1312,6 +1324,11 @@
     "windows_legend_current": "目前視窗",
     "windows_legend_upcoming": "即將開始",
     "windows_legend_elapsed": "已結束",
+    "windows_legend_reset_credit": "主動重設過期",
+    "soonest_row_hint": "該憑證中最先恢復",
+    "windows_reset_credit": "主動重設",
+    "windows_credit_granted": "取得時間",
+    "windows_credit_expires": "過期時間",
     "windows_note_weekly": "每條表示一個完整的配額視窗，從開啟到重設。同時結束的視窗會競用相同的日期。",
     "windows_note_session": "每條表示一個 5 小時視窗。僅顯示有正在計時視窗的憑證，其餘保持為空。",
     "weekday_sun": "日",
@@ -1597,6 +1614,7 @@
       "fennoAI": "FennoAI",
       "qiniuCloud": "七牛雲",
       "lmuAI": "LMU AI（靈眸AI）",
+      "infistar": "無限星河",
       "kimi": "Kimi"
     },
     "table": {
@@ -1649,11 +1667,15 @@
         "standard": "普通 URL",
         "direct": "專線直連 URL",
         "domestic": "中國大陸線路",
-        "overseas": "海外線路"
+        "overseas": "海外線路",
+        "mainlandChina": "中國大陸（推薦）",
+        "global": "全球"
       },
       "urlOptionDescriptions": {
         "domestic": "面向中國大陸使用者和部署在中國大陸網路環境中的業務，通常可獲得更低延遲。",
-        "overseas": "面向海外部署、跨境存取或需要存取境外模型的業務。"
+        "overseas": "面向海外部署、跨境存取或需要存取境外模型的業務。",
+        "mainlandChinaRecommended": "推薦中國大陸使用者和部署在中國大陸網路環境中的業務使用。",
+        "global": "適用於全球其他地區的使用者和部署環境。"
       },
       "modelsTitle": "協議模型設定",
       "modelsHint": "可分別限制或別名映射 Codex API、Anthropic、Gemini 與 OpenAI 相容入口的模型。",

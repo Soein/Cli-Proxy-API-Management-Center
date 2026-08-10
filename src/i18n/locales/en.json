@@ -345,6 +345,8 @@
     "weight_hint": "Defaults to 1. Values at or below 0 exclude this credential from weighted scheduling; maximum 1,000,000.",
     "weight_invalid_integer": "Weight must be an integer.",
     "weight_invalid_max": "Weight cannot exceed 1,000,000.",
+    "disable_cooling_label": "Disable exponential cooldown (disable_cooling)",
+    "disable_cooling_hint": "Skip failure cooldown and exponential backoff only for this credential; other credentials are unaffected.",
     "websockets_label": "WebSockets (websockets)",
     "websockets_hint": "Enable Responses API websocket transport for this credential.",
     "using_api_label": "Use official API (using_api)",
@@ -457,7 +459,7 @@
     "plan_label": "Plan",
     "expires_label": "Renewal time",
     "reset_credits_label": "Manual resets",
-    "reset_credits_expiry_label": "Manual reset expiry (GMT+8)",
+    "reset_credits_expiry_label": "Manual reset expiry ({{timezone}})",
     "reset_credit_number": "Reset {{index}}",
     "reset_credits_expiry_failed": "Failed to load manual reset expiry: {{message}}",
     "reset_credits_invalid_payload": "Invalid manual reset expiry response",
@@ -945,6 +947,21 @@
   },
   "config_management": {
     "title": "Config Panel",
+    "meta_fields": "{{count}} settings",
+    "meta_dirty": "{{count}} unsaved",
+    "meta_dirty_source": "Unsaved source edits",
+    "meta_errors": "{{count}} validation errors",
+    "meta_synced": "In sync",
+    "actions": {
+      "discard": "Discard changes",
+      "save": "Save changes"
+    },
+    "discard_confirm_message": "Discard all unsaved changes and restore the last server version?",
+    "mode": {
+      "label": "Editor mode",
+      "visual": "Visual",
+      "source": "Source"
+    },
     "reload": "Reload",
     "reload_confirm_message": "Reloading will discard your unsaved changes. Do you want to continue?",
     "save": "Save",
@@ -978,26 +995,16 @@
       "confirm": "Confirm Save",
       "no_changes": "No changes detected"
     },
-    "tabs": {
-      "visual": "Visual Editor",
-      "source": "Source File Editor"
-    },
     "visual": {
-      "notice": "Visual mode covers common fields. Review or edit unsupported config.yaml entries in source mode.",
-      "quick_jump": "Quick Jump",
-      "mode": {
-        "simple": "Simple",
-        "full": "Full",
-        "label": "Editor mode",
-        "more_settings": "Switch to full mode to see all {{total}} sections",
-        "validation_banner": "Some advanced settings have validation errors and are blocking save. Switch to full mode to fix them.",
-        "switch_to_full": "Switch to full mode"
-      },
       "search": {
         "placeholder": "Search settings (label or YAML key)",
         "no_results": "No matching settings"
       },
       "sections": {
+        "common": {
+          "title": "Common",
+          "description": "The most-used settings, backed by the same data as the full sections"
+        },
         "connectivity": {
           "title": "Access & Authentication",
           "description": "Server address, port, auth directory, and API keys"
@@ -1013,8 +1020,6 @@
           "signature_title": "Antigravity Signature"
         },
         "server": {
-          "title": "Server Configuration",
-          "description": "Basic server settings",
           "host": "Host Address",
           "port": "Port"
         },
@@ -1040,14 +1045,10 @@
           "panel_repo": "Panel Repository"
         },
         "auth": {
-          "title": "Authentication Configuration",
-          "description": "API keys and authentication directory settings",
           "auth_dir": "Auth Directory (auth-dir)",
           "auth_dir_hint": "Directory path for authentication files (supports ~)"
         },
         "system": {
-          "title": "System Configuration",
-          "description": "Debug, logging, statistics, and performance settings",
           "debug": "Debug Mode",
           "debug_desc": "Enable verbose debug logging",
           "commercial_mode": "Commercial Mode",
@@ -1193,7 +1194,15 @@
         "input_placeholder": "Paste your API key",
         "input_hint": "This only modifies the local config file content, it will not sync to the API Key Management interface",
         "error_empty": "Please enter an API key",
-        "error_invalid": "API key contains invalid characters"
+        "error_invalid": "API key contains invalid characters",
+        "strength": {
+          "label": "API key strength",
+          "empty": "Not entered",
+          "weak": "Weak",
+          "fair": "Fair",
+          "good": "Good",
+          "strong": "Strong"
+        }
       },
       "payload_rules": {
         "rule": "Rule",
@@ -1267,6 +1276,9 @@
     "title": "Quota Management",
     "description": "Monitor OAuth quota status for Antigravity, Codex, Claude, Kimi, and xAI credentials.",
     "refresh_all_credentials": "Refresh all credentials",
+    "sort_label": "Sort",
+    "sort_default": "Default",
+    "sort_soonest": "Soonest recovery",
     "meta_credentials": "{{count}} credentials",
     "meta_loaded": "{{count}} loaded",
     "meta_attention": "{{count}} need attention",
@@ -1287,6 +1299,11 @@
     "windows_legend_current": "current window",
     "windows_legend_upcoming": "upcoming",
     "windows_legend_elapsed": "elapsed",
+    "windows_legend_reset_credit": "manual reset expiry",
+    "soonest_row_hint": "Recovers first on this credential",
+    "windows_reset_credit": "Manual reset",
+    "windows_credit_granted": "Granted",
+    "windows_credit_expires": "Expires",
     "windows_note_weekly": "Each bar is one full quota window, drawn from when it opened to when it resets. Lanes ending together compete for the same days.",
     "windows_note_session": "Each bar is one 5-hour window. Only credentials with a window counting down can be projected; the rest stay empty rather than invented.",
     "weekday_sun": "Sun",
@@ -1572,6 +1589,7 @@
       "fennoAI": "FennoAI",
       "qiniuCloud": "Qiniu Cloud",
       "lmuAI": "LMU AI (Lingmou AI)",
+      "infistar": "Infistar",
       "kimi": "Kimi"
     },
     "table": {
@@ -1624,11 +1642,15 @@
         "standard": "Standard URL",
         "direct": "Direct URL",
         "domestic": "China mainland route",
-        "overseas": "Overseas route"
+        "overseas": "Overseas route",
+        "mainlandChina": "Mainland China (recommended)",
+        "global": "Global"
       },
       "urlOptionDescriptions": {
         "domestic": "For users and workloads in mainland China; usually lower latency in mainland networks.",
-        "overseas": "For overseas deployments, cross-border access, or workloads that need overseas models."
+        "overseas": "For overseas deployments, cross-border access, or workloads that need overseas models.",
+        "mainlandChinaRecommended": "Recommended for users and workloads on mainland China networks.",
+        "global": "For users and workloads in all other regions."
       },
       "modelsTitle": "Protocol model settings",
       "modelsHint": "Configure model allowlists or aliases separately for Codex API, Anthropic, Gemini, and OpenAI-compatible routes.",
