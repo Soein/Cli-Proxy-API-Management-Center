@@ -10,6 +10,7 @@ import {
   getLmuAIProtocolUrls,
 } from '../src/features/providers/lmuAI';
 import { getSponsorProviderDefinition } from '../src/features/providers/sponsorDefinitions';
+import { buildProviderSnapshot } from '../src/features/providers/useProviderWorkbench';
 
 const allProtocolConfig = {
   openaiCompatibility: [
@@ -74,5 +75,77 @@ describe('LMU AI provider', () => {
       PROVIDER_BRAND_ORDER.indexOf('infistar')
     );
     expect(PROVIDER_LOGOS.lmuAI.src).toContain('lmu-ai.png');
+  });
+
+  test('displays LMU protocol configs under native groups when LMU sponsor group is hidden', () => {
+    const mixedConfig = {
+      ...allProtocolConfig,
+      geminiApiKeys: [
+        ...allProtocolConfig.geminiApiKeys,
+        { apiKey: 'custom-gemini-key', baseUrl: 'https://gemini.example.com' },
+      ],
+      openaiCompatibility: [
+        ...allProtocolConfig.openaiCompatibility,
+        {
+          name: 'Custom Provider',
+          baseUrl: 'https://custom.example.com/v1',
+          apiKeyEntries: [{ apiKey: 'custom-key' }],
+        },
+      ],
+    };
+
+    const snapshot = buildProviderSnapshot(mixedConfig);
+    expect(snapshot).not.toBeNull();
+
+    // 1. LMU aggregation group is hidden
+    const lmuGroup = snapshot?.groups.find((group) => group.id === 'lmuAI');
+    expect(lmuGroup).toBeUndefined();
+
+    // 2. Native protocol groups take over displaying the respective LMU resources
+    const geminiGroup = snapshot?.groups.find((group) => group.id === 'gemini');
+    expect(geminiGroup?.resources).toHaveLength(2);
+    expect(geminiGroup?.resources[0].selector).toEqual({
+      brand: 'gemini',
+      index: 0,
+      apiKey: 'gemini-key',
+      baseUrl: LMU_AI_BASE_URL,
+    });
+    expect(geminiGroup?.resources[1].selector).toEqual({
+      brand: 'gemini',
+      index: 1,
+      apiKey: 'custom-gemini-key',
+      baseUrl: 'https://gemini.example.com',
+    });
+
+    const codexGroup = snapshot?.groups.find((group) => group.id === 'codex');
+    expect(codexGroup?.resources).toHaveLength(1);
+    expect(codexGroup?.resources[0].selector).toEqual({
+      brand: 'codex',
+      index: 0,
+      apiKey: 'codex-key',
+      baseUrl: LMU_AI_OPENAI_BASE_URL,
+    });
+
+    const claudeGroup = snapshot?.groups.find((group) => group.id === 'claude');
+    expect(claudeGroup?.resources).toHaveLength(1);
+    expect(claudeGroup?.resources[0].selector).toEqual({
+      brand: 'claude',
+      index: 0,
+      apiKey: 'claude-key',
+      baseUrl: LMU_AI_BASE_URL,
+    });
+
+    const openaiGroup = snapshot?.groups.find((group) => group.id === 'openaiCompatibility');
+    expect(openaiGroup?.resources).toHaveLength(2);
+    expect(openaiGroup?.resources[0].selector).toEqual({
+      brand: 'openaiCompatibility',
+      index: 0,
+      name: 'lmuAI',
+    });
+    expect(openaiGroup?.resources[1].selector).toEqual({
+      brand: 'openaiCompatibility',
+      index: 1,
+      name: 'Custom Provider',
+    });
   });
 });
