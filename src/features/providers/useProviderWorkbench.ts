@@ -79,7 +79,12 @@ import {
   isInfistarGeminiProvider,
   isInfistarOpenAIProvider,
 } from './infistar';
-import { buildKimiRaw, isKimiClaudeProvider, isKimiOpenAIProvider } from './kimi';
+import {
+  buildKimiRaw,
+  isKimiClaudeProvider,
+  isKimiCodexProvider,
+  isKimiOpenAIProvider,
+} from './kimi';
 import {
   getSponsorProviderDefinition,
   isTemporarilyHiddenSponsorBrand,
@@ -433,7 +438,8 @@ export const buildProviderSnapshot = (
             (fennoAIHidden || !isFennoAICodexProvider(item)) &&
             (qiniuCloudHidden || !isQiniuCloudCodexProvider(item)) &&
             (lmuAIHidden || !isLmuAICodexProvider(item)) &&
-            !isInfistarCodexProvider(item)
+            !isInfistarCodexProvider(item) &&
+            !isKimiCodexProvider(item)
           ) {
             out.push(codexToResource(item, index));
           }
