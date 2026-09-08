@@ -411,6 +411,7 @@ export const buildProviderSnapshot = (
   const fennoAIHidden = TEMPORARILY_HIDDEN_SPONSOR_BRANDS.has('fennoAI');
   const qiniuCloudHidden = TEMPORARILY_HIDDEN_SPONSOR_BRANDS.has('qiniuCloud');
   const lmuAIHidden = TEMPORARILY_HIDDEN_SPONSOR_BRANDS.has('lmuAI');
+  const infistarHidden = TEMPORARILY_HIDDEN_SPONSOR_BRANDS.has('infistar');
   const groups: ProviderGroup[] = PROVIDER_BRAND_ORDER.map((brand) => {
     let resources: ProviderResource[] = [];
     switch (brand) {
@@ -420,7 +421,7 @@ export const buildProviderSnapshot = (
             (code0QuickAccessRemoved || !isCode0GeminiProvider(item)) &&
             (qiniuCloudHidden || !isQiniuCloudGeminiProvider(item)) &&
             (lmuAIHidden || !isLmuAIGeminiProvider(item)) &&
-            !isInfistarGeminiProvider(item)
+            (infistarHidden || !isInfistarGeminiProvider(item))
           ) {
             out.push(geminiToResource(item, index));
           }
@@ -440,7 +441,7 @@ export const buildProviderSnapshot = (
             (fennoAIHidden || !isFennoAICodexProvider(item)) &&
             (qiniuCloudHidden || !isQiniuCloudCodexProvider(item)) &&
             (lmuAIHidden || !isLmuAICodexProvider(item)) &&
-            !isInfistarCodexProvider(item) &&
+            (infistarHidden || !isInfistarCodexProvider(item)) &&
             !isKimiCodexProvider(item)
           ) {
             out.push(codexToResource(item, index));
@@ -459,7 +460,7 @@ export const buildProviderSnapshot = (
             (fennoAIHidden || !isFennoAIClaudeProvider(item)) &&
             (qiniuCloudHidden || !isQiniuCloudClaudeProvider(item)) &&
             (lmuAIHidden || !isLmuAIClaudeProvider(item)) &&
-            !isInfistarClaudeProvider(item) &&
+            (infistarHidden || !isInfistarClaudeProvider(item)) &&
             !isKimiClaudeProvider(item) &&
             (claudeApiQuickAccessRemoved || !isClaudeApiProvider(item))
           ) {
@@ -487,7 +488,7 @@ export const buildProviderSnapshot = (
               (code0QuickAccessRemoved || !isCode0OpenAIProvider(item)) &&
               (qiniuCloudHidden || !isQiniuCloudOpenAIProvider(item)) &&
               (lmuAIHidden || !isLmuAIOpenAIProvider(item)) &&
-              !isInfistarOpenAIProvider(item) &&
+              (infistarHidden || !isInfistarOpenAIProvider(item)) &&
               !isKimiOpenAIProvider(item)
             ) {
               out.push(openaiToResource(item, index));
