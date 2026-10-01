@@ -19,11 +19,19 @@ import {
 } from '../fields/FieldPrimitives';
 import { PluginStoreAuthEditor } from '../blocks/PluginStoreAuthEditor';
 import { StringListEditor } from '../blocks/StringListEditor';
+import { getValidationMessage } from '../blocks/shared';
+import { SectionOAuthBehavior } from './SectionOAuthBehavior';
 
 const Icon = CONFIG_TAB_ICONS.advanced;
 
-/** 06 高级与实验：插件源（只存 env 变量名）、签名缓存、Claude/Codex 请求头默认值。 */
-export function SectionAdvanced({ values, disabled, animateIn, onChange }: ConfigSectionProps) {
+/** 06 高级与实验：插件源、供应商敏感词、签名缓存与请求头默认值。 */
+export function SectionAdvanced({
+  values,
+  validationErrors,
+  disabled,
+  animateIn,
+  onChange,
+}: ConfigSectionProps) {
   const { t } = useTranslation();
 
   const handlePluginStoreSourcesChange = useCallback(
@@ -38,6 +46,10 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
     (antigravitySensitiveWords: string[]) => onChange({ antigravitySensitiveWords }),
     [onChange]
   );
+  const handleDevinSensitiveWordsChange = useCallback(
+    (devinSensitiveWords: string[]) => onChange({ devinSensitiveWords }),
+    [onChange]
+  );
 
   return (
     <SectionCard
@@ -48,6 +60,12 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
       animateIn={animateIn}
     >
       <FieldStack>
+        <SectionOAuthBehavior
+          values={values}
+          validationErrors={validationErrors}
+          disabled={disabled}
+          onChange={onChange}
+        />
         <Collapsible
           label={t('config_management.visual.sections.advanced.plugins_title')}
           defaultOpen={false}
@@ -180,6 +198,39 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
         </Collapsible>
 
         <Collapsible
+          label={t('config_management.visual.sections.advanced.devin_title')}
+          defaultOpen={false}
+        >
+          <FieldStack>
+            <FieldAnchor fieldId="devinSensitiveWords">
+              <FieldGroup
+                title={t('config_management.visual.sections.system.devin_sensitive_words')}
+                description={t(
+                  'config_management.visual.sections.system.devin_sensitive_words_desc'
+                )}
+              >
+                <FieldShell
+                  label={t('config_management.visual.sections.system.devin_sensitive_words_label')}
+                  hint={t('config_management.visual.sections.system.devin_sensitive_words_hint')}
+                >
+                  <StringListEditor
+                    value={values.devinSensitiveWords}
+                    disabled={disabled}
+                    placeholder={t(
+                      'config_management.visual.sections.system.devin_sensitive_words_placeholder'
+                    )}
+                    inputAriaLabel={t(
+                      'config_management.visual.sections.system.devin_sensitive_words_label'
+                    )}
+                    onChange={handleDevinSensitiveWordsChange}
+                  />
+                </FieldShell>
+              </FieldGroup>
+            </FieldAnchor>
+          </FieldStack>
+        </Collapsible>
+
+        <Collapsible
           label={t('config_management.visual.sections.headers.title')}
           hint={t('config_management.visual.sections.headers.description')}
           defaultOpen={false}
@@ -232,6 +283,17 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
                   value={values.claudeHeaderArch}
                   onChange={(e) => onChange({ claudeHeaderArch: e.target.value })}
                   disabled={disabled}
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="claudeHeaderTimezone">
+                <Input
+                  label={t('config_management.visual.additions.claudeHeaderTimezone.label')}
+                  hint={t('config_management.visual.additions.claudeHeaderTimezone.hint')}
+                  type="text"
+                  value={values.claudeHeaderTimezone}
+                  onChange={(e) => onChange({ claudeHeaderTimezone: e.target.value })}
+                  disabled={disabled}
+                  error={getValidationMessage(t, validationErrors?.claudeHeaderTimezone)}
                 />
               </FieldAnchor>
               <FieldAnchor fieldId="claudeHeaderTimeout">

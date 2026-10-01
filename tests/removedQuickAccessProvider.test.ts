@@ -1,23 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  CODE0_ANTHROPIC_BASE_URL,
-  CODE0_CODEX_BASE_URL,
-  CODE0_GEMINI_BASE_URL,
-  CODE0_OPENAI_BASE_URL,
-} from '../src/features/providers/code0';
-import {
-  CLAUDE_API_BASE_URL,
-  CLAUDE_API_LEGACY_BASE_URL,
-} from '../src/features/providers/claudeApi';
-import { REMOVED_QUICK_ACCESS_BRANDS } from '../src/features/providers/descriptors';
 import { buildProviderSnapshot } from '../src/features/providers/useProviderWorkbench';
 import type { Config } from '../src/types';
 
+const CODE0_GEMINI_BASE_URL = 'https://code0.ai/gemini';
+const CODE0_CODEX_BASE_URL = 'https://code0.ai/codex';
+const CODE0_ANTHROPIC_BASE_URL = 'https://code0.ai/anthropic';
+const CODE0_OPENAI_BASE_URL = 'https://code0.ai/v1';
+const CLAUDE_API_BASE_URL = 'https://gw.claudeapi.com';
+const CLAUDE_API_LEGACY_BASE_URL = 'https://gw.apito.ai';
+
 describe('Removed quick access providers (Code0 and ClaudeAPI)', () => {
   test('excludes Code0 and ClaudeAPI from snapshot provider groups', () => {
-    expect(REMOVED_QUICK_ACCESS_BRANDS.has('code0')).toBe(true);
-    expect(REMOVED_QUICK_ACCESS_BRANDS.has('claudeApi')).toBe(true);
-
     const config: Config = {
       geminiApiKeys: [{ apiKey: 'code0-gemini-key', baseUrl: CODE0_GEMINI_BASE_URL }],
       codexApiKeys: [{ apiKey: 'code0-codex-key', baseUrl: CODE0_CODEX_BASE_URL }],

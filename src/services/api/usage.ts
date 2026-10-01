@@ -34,7 +34,11 @@ export const usageApi = {
    * 聚合返回 cluster 段，memory/dual 时忽略参数返回单节点快照。
    */
   getUsage: (params?: UsageQueryParams) =>
-    apiClient.get<UsageResponse>('/usage', { params, timeout: USAGE_TIMEOUT_MS }),
+    apiClient.get<UsageResponse>('/usage', {
+      params,
+      timeout: USAGE_TIMEOUT_MS,
+      useV0Management: true,
+    }),
 
   /**
    * 拉取明细数组（include=details）。RequestEventsDetailsCard 在挂载
@@ -44,19 +48,26 @@ export const usageApi = {
     apiClient.get<UsageResponse>('/usage', {
       params: { ...(params ?? {}), include: 'details' },
       timeout: USAGE_TIMEOUT_MS,
+      useV0Management: true,
     }),
 
   /**
    * 导出使用统计快照
    */
   exportUsage: () =>
-    apiClient.get<UsageExportPayload>('/usage/export', { timeout: USAGE_TIMEOUT_MS }),
+    apiClient.get<UsageExportPayload>('/usage/export', {
+      timeout: USAGE_TIMEOUT_MS,
+      useV0Management: true,
+    }),
 
   /**
    * 导入使用统计快照
    */
   importUsage: (payload: unknown) =>
-    apiClient.post<UsageImportResponse>('/usage/import', payload, { timeout: USAGE_TIMEOUT_MS }),
+    apiClient.post<UsageImportResponse>('/usage/import', payload, {
+      timeout: USAGE_TIMEOUT_MS,
+      useV0Management: true,
+    }),
 
   /**
    * 计算密钥成功/失败统计，必要时会先获取 usage 数据
@@ -64,7 +75,10 @@ export const usageApi = {
   async getKeyStats(usageData?: unknown): Promise<KeyStats> {
     let payload = usageData;
     if (!payload) {
-      const response = await apiClient.get<UsageResponse>('/usage', { timeout: USAGE_TIMEOUT_MS });
+      const response = await apiClient.get<UsageResponse>('/usage', {
+        timeout: USAGE_TIMEOUT_MS,
+        useV0Management: true,
+      });
       payload = response?.usage ?? response;
     }
     return computeKeyStats(payload);

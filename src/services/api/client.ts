@@ -16,10 +16,20 @@ import {
 import { computeApiUrl } from '@/utils/connection';
 import { parseApiErrorResponse } from './apiError';
 
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /** Opt-in custom backend extension routed to /v0/management */
+    useV0Management?: boolean;
+    connectionRevision?: number;
+  }
+}
+
 class ApiClient {
   private instance: AxiosInstance;
   private apiBase: string = '';
+  private v0ManagementBase: string = '';
   private managementKey: string = '';
+  private connectionRevision = 0;
 
   constructor() {
     this.instance = axios.create({
@@ -36,7 +46,14 @@ class ApiClient {
    * 设置 API 配置
    */
   setConfig(config: ApiClientConfig): void {
-    this.apiBase = computeApiUrl(config.apiBase);
+    const apiBase = computeApiUrl(config.apiBase);
+    const v0ManagementBase = apiBase ? apiBase.replace(/\/v8\/management$/, '/v0/management') : '';
+
+    if (apiBase !== this.apiBase || config.managementKey !== this.managementKey) {
+      this.connectionRevision += 1;
+    }
+    this.apiBase = apiBase;
+    this.v0ManagementBase = v0ManagementBase;
     this.managementKey = config.managementKey;
 
     if (config.timeout) {
@@ -44,6 +61,11 @@ class ApiClient {
     } else {
       this.instance.defaults.timeout = REQUEST_TIMEOUT_MS;
     }
+  }
+
+  /** Guards read/modify/write operations across connection changes, including ABA switches. */
+  getConnectionRevision(): number {
+    return this.connectionRevision;
   }
 
   private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {
@@ -97,6 +119,14 @@ class ApiClient {
     return null;
   }
 
+  private prepareConfig<T extends AxiosRequestConfig>(config?: T): T | undefined {
+    if (!config?.useV0Management) return config;
+    return {
+      ...config,
+      connectionRevision: this.connectionRevision,
+    };
+  }
+
   /**
    * 设置请求/响应拦截器
    */
@@ -104,11 +134,21 @@ class ApiClient {
     // 请求拦截器
     this.instance.interceptors.request.use(
       (config) => {
+        if (
+          config.connectionRevision !== undefined &&
+          config.connectionRevision !== this.connectionRevision
+        ) {
+          throw new axios.CanceledError(
+            'Request aborted: management connection changed before dispatch'
+          );
+        }
+
         // 设置 baseURL
-        config.baseURL = this.apiBase;
+        config.baseURL = config.useV0Management ? this.v0ManagementBase : this.apiBase;
 
         // 添加认证头
         if (this.managementKey) {
+          config.headers = config.headers || {};
           config.headers.Authorization = `Bearer ${this.managementKey}`;
         }
 
@@ -120,6 +160,14 @@ class ApiClient {
     // 响应拦截器
     this.instance.interceptors.response.use(
       (response) => {
+        const requestRevision = (response.config as AxiosRequestConfig | undefined)
+          ?.connectionRevision;
+        if (requestRevision !== undefined && requestRevision !== this.connectionRevision) {
+          throw new axios.CanceledError(
+            'Request aborted: management connection changed before response'
+          );
+        }
+
         const headers = response.headers as Record<string, string | undefined>;
         const cpaVersion = this.readHeader(headers, CPA_VERSION_HEADER_KEYS);
         const cpaBuildDate = this.readHeader(headers, CPA_BUILD_DATE_HEADER_KEYS);
@@ -163,10 +211,17 @@ class ApiClient {
       apiError.apiCode = parsedError.apiCode;
       apiError.details = responseData;
       apiError.data = responseData;
+      if ((error as { __CANCEL__?: boolean }).__CANCEL__) {
+        (apiError as unknown as { __CANCEL__: boolean }).__CANCEL__ = true;
+      }
 
       // 401 未授权 - 触发登出事件
       if (error.response?.status === 401) {
-        window.dispatchEvent(new Event('unauthorized'));
+        const requestRevision = (error.config as AxiosRequestConfig | undefined)
+          ?.connectionRevision;
+        if (requestRevision === undefined || requestRevision === this.connectionRevision) {
+          window.dispatchEvent(new Event('unauthorized'));
+        }
       }
 
       return apiError;
@@ -187,7 +242,7 @@ class ApiClient {
    * GET 请求
    */
   async get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    const response = await this.instance.get<T>(url, config);
+    const response = await this.instance.get<T>(url, this.prepareConfig(config));
     return response.data;
   }
 
@@ -195,7 +250,7 @@ class ApiClient {
    * POST 请求
    */
   async post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
-    const response = await this.instance.post<T>(url, data, config);
+    const response = await this.instance.post<T>(url, data, this.prepareConfig(config));
     return response.data;
   }
 
@@ -203,7 +258,7 @@ class ApiClient {
    * PUT 请求
    */
   async put<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
-    const response = await this.instance.put<T>(url, data, config);
+    const response = await this.instance.put<T>(url, data, this.prepareConfig(config));
     return response.data;
   }
 
@@ -211,7 +266,7 @@ class ApiClient {
    * PATCH 请求
    */
   async patch<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
-    const response = await this.instance.patch<T>(url, data, config);
+    const response = await this.instance.patch<T>(url, data, this.prepareConfig(config));
     return response.data;
   }
 
@@ -219,7 +274,7 @@ class ApiClient {
    * DELETE 请求
    */
   async delete<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
-    const response = await this.instance.delete<T>(url, config);
+    const response = await this.instance.delete<T>(url, this.prepareConfig(config));
     return response.data;
   }
 
@@ -227,7 +282,7 @@ class ApiClient {
    * 获取原始响应（用于下载等场景）
    */
   async getRaw(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse> {
-    return this.instance.get(url, config);
+    return this.instance.get(url, this.prepareConfig(config));
   }
 
   /**
@@ -238,10 +293,11 @@ class ApiClient {
     formData: FormData,
     config?: AxiosRequestConfig
   ): Promise<T> {
+    const prepared = this.prepareConfig(config);
     const response = await this.instance.post<T>(url, formData, {
-      ...config,
+      ...prepared,
       headers: {
-        ...(config?.headers || {}),
+        ...(prepared?.headers || {}),
         'Content-Type': 'multipart/form-data',
       },
     });
