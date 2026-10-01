@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createInstance } from 'i18next';
+import { I18nextProvider } from 'react-i18next';
 import {
   readModelOptions,
   buildModelOptions,
@@ -9,6 +11,9 @@ import {
 import { ModelAdvancedFields } from '@/features/providers/sheets/forms/ModelAdvancedFields';
 import type { ModelEntryInput, ProviderBrand } from '@/features/providers/types';
 import type { ModelAlias } from '@/types';
+
+const i18n = createInstance();
+await i18n.init({ lng: 'cimode' });
 
 const draft = (model: ModelAlias): ModelEntryInput => ({
   name: model.name,
@@ -174,13 +179,17 @@ describe('provider model options', () => {
 
   const render = (brand: ProviderBrand, disabled = false, enabled = true) =>
     renderToStaticMarkup(
-      createElement(ModelAdvancedFields, {
-        entry: { name: 'model', thinkingEnabled: enabled },
-        providerBrand: brand,
-        disabled,
-        supportsThinking: true,
-        onUpdate: () => {},
-      })
+      createElement(
+        I18nextProvider,
+        { i18n },
+        createElement(ModelAdvancedFields, {
+          entry: { name: 'model', thinkingEnabled: enabled },
+          providerBrand: brand,
+          disabled,
+          supportsThinking: true,
+          onUpdate: () => {},
+        })
+      )
     );
 
   test('gates fields by provider capability', () => {
@@ -219,5 +228,13 @@ describe('provider model options', () => {
     for (const input of inputs.filter((input) => !input.includes('aria-haspopup="listbox"'))) {
       expect(input).toContain('disabled=""');
     }
+  });
+
+  test('rendering remains isolated when shared i18n is initialized', async () => {
+    await import('@/i18n');
+    const vertex = render('vertex');
+    expect(vertex).toContain('providersPage.modelOptions.displayName');
+    expect(vertex).toContain('providersPage.modelOptions.forceMapping');
+    expect(vertex).not.toContain('providersPage.modelOptions.maxContextLength');
   });
 });
