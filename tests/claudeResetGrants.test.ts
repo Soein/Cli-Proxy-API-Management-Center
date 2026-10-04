@@ -9,6 +9,7 @@ import {
   readClaudeResetGrants,
   AnthropicResetGrantUnknownOutcome,
   ANTHROPIC_RESET_RESULTS,
+  ANTHROPIC_RESET_REQUEST_ID_RE,
   type AnthropicResetSettledCode,
 } from '../src/services/api/claudeResetGrants';
 import { apiCallApi, type ApiCallRequest } from '../src/services/api/apiCall';
@@ -22,8 +23,21 @@ const grant = { id: 'test-grant', resets_total: 2, resets_left: 2, usable_now: t
 const block = { eligible: true, at_limit: true, grants: [grant] };
 const status = () => parseAnthropicResetGrantStatus(block)!;
 const originalRequest = apiCallApi.request;
+const hadOwnCryptoRandomUUID = Object.prototype.hasOwnProperty.call(
+  globalThis.crypto,
+  'randomUUID'
+);
+const originalCryptoRandomUUIDDesc = hadOwnCryptoRandomUUID
+  ? Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID')
+  : undefined;
+
 afterEach(() => {
   apiCallApi.request = originalRequest;
+  if (hadOwnCryptoRandomUUID && originalCryptoRandomUUIDDesc) {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', originalCryptoRandomUUIDDesc);
+  } else {
+    Reflect.deleteProperty(globalThis.crypto, 'randomUUID');
+  }
 });
 
 describe('Claude reset grant fail-closed parsing', () => {
@@ -291,6 +305,136 @@ test('a stale claim answer cannot settle the replacement session operation', asy
   };
   await expect(operations.run('account', 'a', grant.id)).rejects.toThrow('session');
   expect(operations.inspect('account')).toBeUndefined();
+});
+
+test('default reset operations on non-loopback HTTP origin without randomUUID generates valid ID, preserves ID across retry, and issues new ID for fresh operation', async () => {
+  Object.defineProperty(globalThis.crypto, 'randomUUID', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  try {
+    const calls: ApiCallRequest[] = [];
+    let claimAttempts = 0;
+    apiCallApi.request = async (request) => {
+      calls.push(request);
+      if (request.method === 'POST') {
+        claimAttempts++;
+        if (claimAttempts === 1) {
+          throw new Error('connection dropped');
+        }
+        return { statusCode: 200, body: { result: 'reset' }, bodyText: '', header: {} };
+      }
+      if (request.url.endsWith('profile')) {
+        return {
+          statusCode: 200,
+          body: { organization: { uuid: organization } },
+          bodyText: '',
+          header: {},
+        };
+      }
+      return { statusCode: 200, body: { cedar_ember: block }, bodyText: '', header: {} };
+    };
+
+    const operations = createResetGrantOperations();
+
+    // 1. Initial run: profile and usage succeed; claim POST dispatches and fails ambiguously.
+    await expect(operations.run('account-1', 'auth-index', grant.id)).rejects.toBeInstanceOf(
+      AnthropicResetGrantUnknownOutcome
+    );
+
+    const postCalls = () => calls.filter((call) => call.method === 'POST');
+    expect(postCalls()).toHaveLength(1);
+    const firstPayload = JSON.parse(postCalls()[0].data!);
+    const firstRequestId = firstPayload.request_id;
+
+    expect(typeof firstRequestId).toBe('string');
+    expect(firstRequestId).toMatch(ANTHROPIC_RESET_REQUEST_ID_RE);
+    expect(firstRequestId.length).toBeGreaterThanOrEqual(32);
+
+    // 2. Ambiguous retry reuses the exact same request_id and settles.
+    const retryResult = await operations.run('account-1', 'auth-index', grant.id);
+    expect(retryResult).toEqual({ code: 'reset', unresolved: false });
+
+    expect(postCalls()).toHaveLength(2);
+    const retryPayload = JSON.parse(postCalls()[1].data!);
+    expect(retryPayload.request_id).toBe(firstRequestId);
+
+    // 3. An independent new operation receives a distinct high-entropy request ID.
+    const nextResult = await operations.run('account-2', 'auth-index', grant.id);
+    expect(nextResult).toEqual({ code: 'reset', unresolved: false });
+
+    expect(postCalls()).toHaveLength(3);
+    const nextPayload = JSON.parse(postCalls()[2].data!);
+    const nextRequestId = nextPayload.request_id;
+    expect(nextRequestId).toMatch(ANTHROPIC_RESET_REQUEST_ID_RE);
+    expect(nextRequestId.length).toBeGreaterThanOrEqual(32);
+    expect(nextRequestId).not.toBe(firstRequestId);
+  } finally {
+    if (hadOwnCryptoRandomUUID && originalCryptoRandomUUIDDesc) {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', originalCryptoRandomUUIDDesc);
+    } else {
+      Reflect.deleteProperty(globalThis.crypto, 'randomUUID');
+    }
+  }
+});
+
+test('default reset operations preserve request ID across retry after ambiguous unknown HTTP response', async () => {
+  Object.defineProperty(globalThis.crypto, 'randomUUID', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  try {
+    const calls: ApiCallRequest[] = [];
+    let claimAttempts = 0;
+    apiCallApi.request = async (request) => {
+      calls.push(request);
+      if (request.method === 'POST') {
+        claimAttempts++;
+        if (claimAttempts === 1) {
+          return { statusCode: 500, body: { result: 'upstream_error' }, bodyText: '', header: {} };
+        }
+        return { statusCode: 200, body: { result: 'reset' }, bodyText: '', header: {} };
+      }
+      if (request.url.endsWith('profile')) {
+        return {
+          statusCode: 200,
+          body: { organization: { uuid: organization } },
+          bodyText: '',
+          header: {},
+        };
+      }
+      return { statusCode: 200, body: { cedar_ember: block }, bodyText: '', header: {} };
+    };
+
+    const operations = createResetGrantOperations();
+
+    await expect(operations.run('account-1', 'auth-index', grant.id)).rejects.toBeInstanceOf(
+      AnthropicResetGrantUnknownOutcome
+    );
+
+    const postCalls = () => calls.filter((call) => call.method === 'POST');
+    expect(postCalls()).toHaveLength(1);
+    const initialRequestId = JSON.parse(postCalls()[0].data!).request_id;
+    expect(initialRequestId).toMatch(ANTHROPIC_RESET_REQUEST_ID_RE);
+    expect(initialRequestId.length).toBeGreaterThanOrEqual(32);
+
+    const retryResult = await operations.run('account-1', 'auth-index', grant.id);
+    expect(retryResult).toEqual({ code: 'reset', unresolved: false });
+
+    expect(postCalls()).toHaveLength(2);
+    const retryRequestId = JSON.parse(postCalls()[1].data!).request_id;
+    expect(retryRequestId).toBe(initialRequestId);
+  } finally {
+    if (hadOwnCryptoRandomUUID && originalCryptoRandomUUIDDesc) {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', originalCryptoRandomUUIDDesc);
+    } else {
+      Reflect.deleteProperty(globalThis.crypto, 'randomUUID');
+    }
+  }
 });
 
 test('all grant messages and confirmation are translated in four locales', async () => {

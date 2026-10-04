@@ -15,13 +15,27 @@ type Operation = {
   createdAt: number;
   code?: AnthropicResetSettledCode;
 };
+
+function defaultRequestId(): string {
+  const cryptoObj = typeof crypto !== 'undefined' ? crypto : globalThis.crypto;
+  if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoObj.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
+    return cryptoObj.randomUUID();
+  }
+  throw new Error('Web Crypto API is not available');
+}
+
 const defaultDependencies = {
   revision: () => apiClient.getConnectionRevision(),
   readStatus: readClaudeResetGrants,
   readOrganization: readClaudeOrganization,
   claim: claimClaudeResetGrant,
   now: () => Date.now(),
-  requestId: () => crypto.randomUUID() as string,
+  requestId: defaultRequestId,
 };
 
 /** Tab-memory journal: survives dialog/card unmounts, never crosses connections.
