@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios';
 import { apiClient } from './client';
 import { getConfigValue, guardConfigConnection } from './configValue';
 import { isRecord } from '@/utils/helpers';
@@ -259,8 +260,8 @@ export interface PluginStoreInstallOptions {
 }
 
 export const pluginsApi = {
-  async list(): Promise<PluginListResponse> {
-    const data = await apiClient.get('/plugins');
+  async list(config?: AxiosRequestConfig): Promise<PluginListResponse> {
+    const data = await apiClient.get('/plugins', config);
     return normalizePluginList(data);
   },
 

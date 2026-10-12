@@ -128,7 +128,9 @@ describe('generic plugin quota', () => {
         const fetched = QUOTA_ADAPTERS[entry.type].fetchQuota(file, i18n.t);
         if (capability.quota_provider) {
           await fetched;
-          expect(post.mock.calls).toEqual([['/plugins/kiro-quota/quota', { auth_index: '7' }]]);
+          expect(post.mock.calls).toEqual([
+            ['/plugins/kiro-quota/quota', { auth_index: '7' }, { connectionRevision: expect.any(Number) }],
+          ]);
         } else {
           await expect(fetched).rejects.toThrow(i18n.t('plugin_quota.probe_unsupported'));
           expect(post).not.toHaveBeenCalled();

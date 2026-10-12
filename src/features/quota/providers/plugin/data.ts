@@ -1,3 +1,4 @@
+import axios from 'axios';
 import type { TFunction } from 'i18next';
 import type {
   AntigravityQuotaSubscription,
@@ -84,13 +85,16 @@ let pluginListCache: {
 } | null = null;
 
 /** Refresh-all fans out per credential; share one plugin list per connection. */
-const loadQuotaPlugins = (): Promise<PluginListEntry[]> => {
-  const revision = apiClient.getConnectionRevision();
+const loadQuotaPlugins = (
+  revision: number = apiClient.getConnectionRevision()
+): Promise<PluginListEntry[]> => {
   const now = Date.now();
   if (pluginListCache && pluginListCache.revision === revision && pluginListCache.expiresAt > now) {
     return pluginListCache.promise;
   }
-  const promise = pluginsApi.list().then((response) => response.plugins);
+  const promise = pluginsApi
+    .list({ connectionRevision: revision })
+    .then((response) => response.plugins);
   const entry = { revision, expiresAt: now + PLUGIN_LIST_TTL_MS, promise };
   pluginListCache = entry;
   promise.catch(() => {
@@ -107,6 +111,7 @@ export const fetchPluginQuota = async (
   file: AuthFileItem,
   t: TFunction
 ): Promise<PluginQuotaData> => {
+  const revision = apiClient.getConnectionRevision();
   const authIndex = normalizeAuthIndex(file.authIndex ?? file['auth_index']);
   if (!authIndex) throw new Error(t('plugin_quota.missing_auth_index'));
 
@@ -114,12 +119,20 @@ export const fetchPluginQuota = async (
   // Declarative quota_probe credentials have no v8 management route.
   if (!provider) throw new Error(t('plugin_quota.probe_unsupported'));
 
-  const pluginId = resolveQuotaPluginId(await loadQuotaPlugins(), provider);
+  const plugins = await loadQuotaPlugins(revision);
+  if (apiClient.getConnectionRevision() !== revision) {
+    throw new axios.CanceledError(
+      'Request aborted: management connection changed before dispatch'
+    );
+  }
+
+  const pluginId = resolveQuotaPluginId(plugins, provider);
   if (!pluginId) throw new Error(t('plugin_quota.plugin_not_found', { provider }));
 
   const payload = await apiClient.post<PluginQuotaPayload>(
     `/plugins/${encodeURIComponent(pluginId)}/quota`,
-    { auth_index: authIndex }
+    { auth_index: authIndex },
+    { connectionRevision: revision }
   );
   return {
     groups: buildAntigravityQuotaGroups(payload),
