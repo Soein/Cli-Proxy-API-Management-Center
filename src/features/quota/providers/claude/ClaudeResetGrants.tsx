@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNow } from '@/hooks/useNow';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { useNotificationStore } from '@/stores';
+import {
+  captureQuotaCacheGeneration,
+  commitIfQuotaCacheCurrent,
+  useNotificationStore,
+  useQuotaStore,
+} from '@/stores';
 import { apiClient } from '@/services/api/client';
 import {
   AnthropicResetGrantError,
@@ -29,6 +34,10 @@ export function useClaudeResetGrants(
     connectionStatus === 'connected' && session === apiClient.getConnectionRevision();
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const showNotification = useNotificationStore((state) => state.showNotification);
+  const cacheGeneration = useQuotaStore((state) => state.cacheGeneration);
+  const fileGeneration = useQuotaStore((state) =>
+    file.name ? (state.fileGenerations[file.name] ?? 0) : 0
+  );
   const now = useNow();
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   const key = JSON.stringify([file.name, authIndex]);
@@ -41,12 +50,17 @@ export function useClaudeResetGrants(
   useEffect(() => {
     const version = ++generation.current;
     setStatus(null);
+    setMessage('');
     if (!enabled || disabled || !sessionActive || !authIndex) return;
+    const cacheSnapshot = captureQuotaCacheGeneration(file.name);
     let cancelled = false;
     const current = () =>
-      !cancelled && version === generation.current && session === apiClient.getConnectionRevision();
+      !cancelled &&
+      version === generation.current &&
+      session === apiClient.getConnectionRevision() &&
+      commitIfQuotaCacheCurrent(cacheSnapshot, () => {}, file.name);
     const cancelRead = scheduleResetGrantRead(() => {
-      void readResetGrantsForCard(authIndex).then(
+      void readResetGrantsForCard(file.name, authIndex).then(
         (result) => {
           if (current()) {
             setStatus(result);
@@ -69,7 +83,19 @@ export function useClaudeResetGrants(
       cancelRead();
       generation.current += 1;
     };
-  }, [authIndex, key, enabled, disabled, sessionActive, session, refreshToken, reload]);
+  }, [
+    authIndex,
+    key,
+    enabled,
+    disabled,
+    sessionActive,
+    session,
+    refreshToken,
+    reload,
+    file.name,
+    cacheGeneration,
+    fileGeneration,
+  ]);
 
   const operation = resetGrantOperations.inspect(key);
   const pending = operation && !operation.code ? operation : undefined;
@@ -79,8 +105,11 @@ export function useClaudeResetGrants(
   const confirm = () => {
     if (blocked || lock.current || !selected || !authIndex) return;
     const version = generation.current;
+    const cacheSnapshot = captureQuotaCacheGeneration(file.name);
     const current = () =>
-      session === apiClient.getConnectionRevision() && version === generation.current;
+      session === apiClient.getConnectionRevision() &&
+      version === generation.current &&
+      commitIfQuotaCacheCurrent(cacheSnapshot, () => {}, file.name);
     showConfirmation({
       title: t('claude_reset.title'),
       message: t(pending ? 'claude_reset.retry_confirm' : 'claude_reset.confirm_text', {
