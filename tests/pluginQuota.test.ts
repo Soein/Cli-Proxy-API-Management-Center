@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { Mock } from 'bun:test';
+import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import i18n from '@/i18n';
@@ -129,7 +130,11 @@ describe('generic plugin quota', () => {
         if (capability.quota_provider) {
           await fetched;
           expect(post.mock.calls).toEqual([
-            ['/plugins/kiro-quota/quota', { auth_index: '7' }, { connectionRevision: expect.any(Number) }],
+            [
+              '/plugins/kiro-quota/quota',
+              { auth_index: '7' },
+              { connectionRevision: expect.any(Number) },
+            ],
           ]);
         } else {
           await expect(fetched).rejects.toThrow(i18n.t('plugin_quota.probe_unsupported'));
@@ -144,6 +149,167 @@ describe('generic plugin quota', () => {
     } finally {
       post.mockRestore();
     }
+  });
+
+  test('normalizes the backend-selected quota plugin ID without changing its case', () => {
+    for (const fields of [
+      { quota_plugin_id: ' Healthy-Quota ' },
+      { quotaPluginId: ' Healthy-Quota ' },
+      { quota_plugin_id: ' Healthy-Quota ', quotaPluginId: 'wrong' },
+    ]) {
+      const [file] = normalizeAuthFilesResponse({
+        files: [{ name: 'foo.json', ...fields }],
+      }).files;
+      expect(file.quotaPluginId).toBe('Healthy-Quota');
+    }
+    for (const value of [undefined, null, '', '  ', 42, {}]) {
+      const [file] = normalizeAuthFilesResponse({
+        files: [{ name: 'foo.json', quota_plugin_id: value }],
+      }).files;
+      expect(file.quotaPluginId).toBeUndefined();
+    }
+  });
+
+  test('uses the host-selected plugin without discovery or a provider match', async () => {
+    const post = spyOn(apiClient, 'post').mockResolvedValue({});
+    list.mockRejectedValue(new Error('plugin discovery unavailable'));
+    try {
+      for (const quotaProvider of ['kiro', 'multi-provider-alias', undefined]) {
+        const [file] = normalizeAuthFilesResponse({
+          files: [
+            {
+              name: 'foo.json',
+              type: 'foo',
+              auth_index: '7',
+              supports_quota: true,
+              quota_provider: quotaProvider,
+              quota_plugin_id: 'Healthy/Quota',
+            },
+          ],
+        }).files;
+        expect(resolveQuotaProviderType(file)).toBe('plugin');
+        await fetchPluginQuota(file, i18n.t);
+      }
+      expect(list).not.toHaveBeenCalled();
+      expect(post.mock.calls).toEqual(
+        Array(3).fill([
+          '/plugins/Healthy%2FQuota/quota',
+          { auth_index: '7' },
+          { connectionRevision: expect.any(Number) },
+        ])
+      );
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  test('rejects direct-plugin quota request when management connection changes in flight', async () => {
+    const instance = (
+      apiClient as unknown as { instance: { defaults: { adapter?: AxiosAdapter } } }
+    ).instance;
+    const originalAdapter = instance.defaults.adapter;
+    apiClient.setConfig({
+      apiBase: 'https://server-a.invalid',
+      managementKey: 'key-a',
+    });
+
+    let resolveQuotaPost!: (value: AxiosResponse) => void;
+    const quotaPostPromise = new Promise<AxiosResponse>((res) => {
+      resolveQuotaPost = res;
+    });
+    let resolveQuotaDispatched!: () => void;
+    const quotaDispatched = new Promise<void>((res) => {
+      resolveQuotaDispatched = res;
+    });
+    let quotaConfig: InternalAxiosRequestConfig | undefined;
+
+    instance.defaults.adapter = async (config) => {
+      if (config.url === '/plugins/Healthy%2FQuota/quota') {
+        quotaConfig = config;
+        resolveQuotaDispatched();
+        return quotaPostPromise;
+      }
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    list.mockRejectedValue(new Error('plugin discovery should not be called'));
+
+    try {
+      const [file] = normalizeAuthFilesResponse({
+        files: [
+          {
+            name: 'direct.json',
+            type: 'foo',
+            auth_index: '7',
+            supports_quota: true,
+            quota_plugin_id: 'Healthy/Quota',
+          },
+        ],
+      }).files;
+
+      const initialRevision = apiClient.getConnectionRevision();
+      const fetchPromise = fetchPluginQuota(file, i18n.t);
+
+      await quotaDispatched;
+
+      expect(quotaConfig).toBeDefined();
+      expect(quotaConfig?.baseURL).toBe('https://server-a.invalid/v8/management');
+      const requestData =
+        typeof quotaConfig?.data === 'string' ? JSON.parse(quotaConfig.data) : quotaConfig?.data;
+      expect(requestData).toEqual({ auth_index: '7' });
+      expect(quotaConfig?.connectionRevision).toBe(initialRevision);
+
+      // Connection switches to Server B while direct plugin quota request is in flight
+      apiClient.setConfig({
+        apiBase: 'https://server-b.invalid',
+        managementKey: 'key-b',
+      });
+
+      // Old server A finally responds
+      resolveQuotaPost({
+        data: { subscription: { plan: 'Stale-Plan' } },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: quotaConfig!,
+      });
+
+      await expect(fetchPromise).rejects.toHaveProperty('code', 'ERR_CANCELED');
+      expect(list).not.toHaveBeenCalled();
+    } finally {
+      instance.defaults.adapter = originalAdapter;
+      apiClient.setConfig({ apiBase: '', managementKey: '' });
+    }
+  });
+
+  test('does not substitute another plugin when the selected plugin fails', async () => {
+    const post = spyOn(apiClient, 'post').mockRejectedValue(new Error('plugin unavailable'));
+    try {
+      await expect(
+        fetchPluginQuota(
+          {
+            name: 'foo.json',
+            authIndex: '7',
+            quotaProvider: 'kiro',
+            quotaPluginId: 'selected',
+          },
+          i18n.t
+        )
+      ).rejects.toThrow('plugin unavailable');
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(list).not.toHaveBeenCalled();
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  test('does not advertise probe-only credentials from the new v8 response', () => {
+    const [file] = normalizeAuthFilesResponse({
+      files: [{ name: 'probe.json', type: 'custom', auth_index: '7' }],
+    }).files;
+    expect(isPluginQuotaFile(file)).toBe(false);
+    expect(classifyQuotaFiles([file])).toEqual([]);
+    expect(resolveAuthFileQuotaType(file, 'all')).toBeNull();
   });
 
   test('renders an empty state only without usable summary, subscription or buckets', async () => {

@@ -25,16 +25,23 @@ type PluginQuotaData = {
   summary: PluginQuotaMetric[];
 };
 
-export const normalizePluginQuotaSummary = (summary: PluginQuotaPayload['summary']): PluginQuotaMetric[] => {
+export const normalizePluginQuotaSummary = (
+  summary: PluginQuotaPayload['summary']
+): PluginQuotaMetric[] => {
   if (!Array.isArray(summary)) return [];
   return summary.flatMap((metric) => {
     const key = typeof metric.key === 'string' ? metric.key.trim() : '';
     const label = typeof metric.label === 'string' ? metric.label.trim() : '';
-    if (!key || !label || typeof metric.value !== 'number' || !Number.isFinite(metric.value)) return [];
-    const format = metric.format === 'currency' || metric.format === 'number' ? metric.format : undefined;
-    const unit = typeof metric.unit === 'string' && metric.unit.trim() ? metric.unit.trim() : undefined;
+    if (!key || !label || typeof metric.value !== 'number' || !Number.isFinite(metric.value))
+      return [];
+    const format =
+      metric.format === 'currency' || metric.format === 'number' ? metric.format : undefined;
+    const unit =
+      typeof metric.unit === 'string' && metric.unit.trim() ? metric.unit.trim() : undefined;
     const currency =
-      format === 'currency' && typeof metric.currency === 'string' && /^[A-Z]{3}$/.test(metric.currency)
+      format === 'currency' &&
+      typeof metric.currency === 'string' &&
+      /^[A-Z]{3}$/.test(metric.currency)
         ? metric.currency
         : undefined;
     return [{ key, label, value: metric.value, unit, format, currency }];
@@ -45,7 +52,8 @@ const normalizeSubscription = (
   subscription: PluginQuotaPayload['subscription']
 ): AntigravityQuotaSubscription | null => {
   if (!subscription) return null;
-  const value = (field: unknown) => (typeof field === 'string' && field.trim() ? field.trim() : null);
+  const value = (field: unknown) =>
+    typeof field === 'string' && field.trim() ? field.trim() : null;
   return {
     plan: value(subscription.plan),
     tierName: value(subscription.tierName),
@@ -57,8 +65,8 @@ const normalizeProviderId = (value: unknown) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
 /**
- * v8 only serves plugin quotas at /plugins/:id/quota, while credentials advertise a provider.
- * Mirror the backend's first-pass match (quota identifier, plugin ID, then auth provider). A
+ * Compatibility heuristic for older v8 credentials without quotaPluginId.
+ * Prefer a quota identifier, plugin ID, then auth provider match. A
  * plugin matched only through DescribeQuota's supported providers is not exposed by /plugins,
  * so fall back to the sole quota plugin when exactly one is registered.
  */
@@ -116,17 +124,22 @@ export const fetchPluginQuota = async (
   if (!authIndex) throw new Error(t('plugin_quota.missing_auth_index'));
 
   const provider = String(file.quotaProvider ?? file['quota_provider'] ?? '').trim();
-  // Declarative quota_probe credentials have no v8 management route.
-  if (!provider) throw new Error(t('plugin_quota.probe_unsupported'));
+  // New v8 credentials carry the host's authoritative selection, including multi-provider
+  // plugins and healthy alternatives. Do not re-resolve it against a stale plugin list.
+  let pluginId = file.quotaPluginId;
+  if (!pluginId) {
+    // Declarative quota_probe credentials have no v8 management route.
+    if (!provider) throw new Error(t('plugin_quota.probe_unsupported'));
 
-  const plugins = await loadQuotaPlugins(revision);
-  if (apiClient.getConnectionRevision() !== revision) {
-    throw new axios.CanceledError(
-      'Request aborted: management connection changed before dispatch'
-    );
+    const plugins = await loadQuotaPlugins(revision);
+    if (apiClient.getConnectionRevision() !== revision) {
+      throw new axios.CanceledError(
+        'Request aborted: management connection changed before dispatch'
+      );
+    }
+
+    pluginId = resolveQuotaPluginId(plugins, provider) ?? undefined;
   }
-
-  const pluginId = resolveQuotaPluginId(plugins, provider);
   if (!pluginId) throw new Error(t('plugin_quota.plugin_not_found', { provider }));
 
   const payload = await apiClient.post<PluginQuotaPayload>(
