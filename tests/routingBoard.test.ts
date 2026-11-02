@@ -269,6 +269,66 @@ describe('writing a plan', () => {
     expect(() => buildRoutingConfigPatch(changed, current, plan)).toThrow(RoutingConflictError);
   });
 
+  test('refuses to write when compat keys were reordered, replaced, added or removed', () => {
+    const current = board();
+    const draft = draftFromBoard(current);
+    draft.weights['compat:0'] = [10, 2];
+    const plan = buildRoutingPlan(current, draft);
+
+    // Reorder (swap same count)
+    const reordered = structuredClone(RAW);
+    reordered['api-keys']['openai-compatibility'][0].keys.reverse();
+    expect(() => buildRoutingConfigPatch(reordered, current, plan)).toThrow(RoutingConflictError);
+
+    // Replacement
+    const replaced = structuredClone(RAW);
+    replaced['api-keys']['openai-compatibility'][0].keys[1]['api-key'] = 'sk-or-different';
+    expect(() => buildRoutingConfigPatch(replaced, current, plan)).toThrow(RoutingConflictError);
+
+    // Added key
+    const added = structuredClone(RAW);
+    added['api-keys']['openai-compatibility'][0].keys.push({ 'api-key': 'sk-or-3333' });
+    expect(() => buildRoutingConfigPatch(added, current, plan)).toThrow(RoutingConflictError);
+
+    // Removed key
+    const removed = structuredClone(RAW);
+    removed['api-keys']['openai-compatibility'][0].keys.pop();
+    expect(() => buildRoutingConfigPatch(removed, current, plan)).toThrow(RoutingConflictError);
+  });
+
+  test('preserves untouched latest weights, custom fields, and applies edited slot and null reset', () => {
+    const current = board();
+    const draft = draftFromBoard(current);
+    // Baseline: slot 0 is null, slot 1 is 2.
+    // Edit slot 0 to 10; leave slot 1 untouched (remains 2).
+    draft.weights['compat:0'] = [10, 2];
+    const plan = buildRoutingPlan(current, draft);
+
+    const latest = structuredClone(RAW);
+    // Intervening change on untouched slot 1 in latestRaw:
+    latest['api-keys']['openai-compatibility'][0].keys[1].weight = 50;
+    latest['api-keys']['openai-compatibility'][0].keys[1]['custom-header'] = 'preserve-me';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const patch = buildRoutingConfigPatch(latest, current, plan) as Record<string, any>;
+    const compatKeys = patch['api-keys']['openai-compatibility'][0].keys;
+    expect(compatKeys[0].weight).toBe(10);
+    // Untouched slot 1 retains latest weight 50 and custom fields
+    expect(compatKeys[1].weight).toBe(50);
+    expect(compatKeys[1]['custom-header']).toBe('preserve-me');
+
+    // Null reset test: baseline slot 1 has weight 2; draft explicitly sets it to null
+    const nullDraft = draftFromBoard(current);
+    nullDraft.weights['compat:0'] = [null, null];
+    const nullPlan = buildRoutingPlan(current, nullDraft);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nullPatch = buildRoutingConfigPatch(RAW, current, nullPlan) as Record<string, any>;
+    const nullCompatKeys = nullPatch['api-keys']['openai-compatibility'][0].keys;
+    expect(nullCompatKeys[0].weight).toBeUndefined();
+    expect(nullCompatKeys[1].weight).toBeUndefined();
+    expect('weight' in nullCompatKeys[1]).toBe(false);
+  });
+
   test('a settings-only plan touches no provider list', () => {
     const current = board();
     const draft = draftFromBoard(current);

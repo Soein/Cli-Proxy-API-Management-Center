@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import i18n from '../src/i18n/index';
 import { authFilesApi } from '../src/services/api/authFiles';
 import { apiClient } from '../src/services/api/client';
-import { buildRoutingBoard, routingApi } from '../src/services/api/routing';
+import { buildRoutingBoard, routingApi, RoutingConflictError } from '../src/services/api/routing';
 import {
   buildRoutingPlan,
   draftFromBoard,
@@ -209,10 +209,10 @@ describe('applying a routing plan', () => {
     });
     restores.push(spyOn(authFilesApi, 'patchFields').mockImplementation(patchFields));
     restores.push(
-      spyOn(apiClient, 'get').mockImplementation((async (url: string) => {
+      spyOn(apiClient, 'getRaw').mockImplementation((async (url: string) => {
         calls.push(`get:${url}`);
-        return RAW;
-      }) as typeof apiClient.get)
+        return { data: RAW, headers: { etag: '"fresh-etag-123"' } } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      }) as typeof apiClient.getRaw)
     );
     const patch = mock(async (url: string, body: unknown) => {
       calls.push(`patch:${url}`);
@@ -226,10 +226,76 @@ describe('applying a routing plan', () => {
     expect(calls).toEqual(['fields:main.json', 'get:/config', 'patch:/config']);
     expect(result.failed).toBeNull();
     expect(result.applied).toEqual(['cred:main.json', 'key:codex:0:0', 'settings']);
+    expect(patch.mock.calls[0][2]?.headers).toEqual({ 'If-Match': '"fresh-etag-123"' });
     const body = patch.mock.calls[0][1] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(body.routing).toEqual({ 'session-affinity': true });
     expect(plan.priorities).toEqual({ 'cred:main.json': 10, 'key:codex:0:0': 0 });
     expect(body['api-keys'].codex[0].keys[0].priority).toBe(0);
+  });
+
+  test('missing ETag fails closed without PATCH and preserves applied credentials', async () => {
+    const calls: string[] = [];
+    restores.push(
+      spyOn(authFilesApi, 'patchFields').mockImplementation(async (name) => {
+        calls.push(`fields:${name}`);
+        return {};
+      })
+    );
+    restores.push(
+      spyOn(apiClient, 'getRaw').mockImplementation((async (url: string) => {
+        calls.push(`get:${url}`);
+        return { data: RAW, headers: {} } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      }) as typeof apiClient.getRaw)
+    );
+    const patch = mock(async (url: string, body: unknown) => {
+      calls.push(`patch:${url}`);
+      return body;
+    });
+    restores.push(spyOn(apiClient, 'patch').mockImplementation(patch as typeof apiClient.patch));
+
+    const { board, plan } = planFor();
+    const result = await routingApi.applyPlan(board, plan);
+
+    expect(calls).toEqual(['fields:main.json', 'get:/config']);
+    expect(patch).not.toHaveBeenCalled();
+    expect(result.applied).toEqual(['cred:main.json']);
+    expect(result.failed?.key).toBe('config');
+    expect(result.failed?.error).toBeInstanceOf(RoutingConflictError);
+    expect(result.notAttempted).toEqual(['key:codex:0:0', 'settings']);
+  });
+
+  test('intervening edit causes mock backend 412: converted to RoutingConflictError and does not retry', async () => {
+    const calls: string[] = [];
+    restores.push(
+      spyOn(authFilesApi, 'patchFields').mockImplementation(async (name) => {
+        calls.push(`fields:${name}`);
+        return {};
+      })
+    );
+    restores.push(
+      spyOn(apiClient, 'getRaw').mockImplementation((async (url: string) => {
+        calls.push(`get:${url}`);
+        return { data: RAW, headers: { etag: '"etag-version-1"' } } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      }) as typeof apiClient.getRaw)
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const patchError = new Error('Precondition Failed') as any;
+    patchError.status = 412;
+    const patch = mock(async (url: string) => {
+      calls.push(`patch:${url}`);
+      throw patchError;
+    });
+    restores.push(spyOn(apiClient, 'patch').mockImplementation(patch as typeof apiClient.patch));
+
+    const { board, plan } = planFor();
+    const result = await routingApi.applyPlan(board, plan);
+
+    expect(calls).toEqual(['fields:main.json', 'get:/config', 'patch:/config']);
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(result.applied).toEqual(['cred:main.json']);
+    expect(result.failed?.key).toBe('config');
+    expect(result.failed?.error).toBeInstanceOf(RoutingConflictError);
+    expect(result.notAttempted).toEqual(['key:codex:0:0', 'settings']);
   });
 
   test('stops at the first failed credential and reports what was not attempted', async () => {

@@ -43,7 +43,13 @@ export type RoutingMemberLocation =
       /** Identity check before writing: positions are only valid for the document they came from. */
       apiKey: string;
     }
-  | { kind: 'compat'; groupIndex: number; name: string }
+  | {
+      kind: 'compat';
+      groupIndex: number;
+      name: string;
+      /** Identity check before writing: underlying API keys in slot order. */
+      apiKeys: string[];
+    }
   | { kind: 'credential'; name: string };
 
 /** Where a member's callable models come from. */

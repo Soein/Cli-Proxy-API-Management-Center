@@ -171,6 +171,7 @@ function compatMembers(raw: unknown): RoutingMember[] {
     const keys = Array.isArray(group.keys) ? group.keys.filter(isRecord) : [];
     const name = readText(group.name);
     const models = readModelIds(group.models);
+    const apiKeys = keys.map((key) => readText(key['api-key']));
     members.push({
       key: `compat:${groupIndex}`,
       kind: 'compat',
@@ -181,7 +182,7 @@ function compatMembers(raw: unknown): RoutingMember[] {
       weights: keys.map((key, index) => ({
         index,
         weight: readInteger(key.weight),
-        label: maskApiKey(readText(key['api-key'])) || `#${index + 1}`,
+        label: maskApiKey(apiKeys[index]) || `#${index + 1}`,
       })),
       // A keyless provider still schedules once.
       keyCount: Math.max(1, keys.length),
@@ -192,7 +193,7 @@ function compatMembers(raw: unknown): RoutingMember[] {
       modelSource: models.length > 0 ? { type: 'list', models } : { type: 'none' },
       unavailable: false,
       cooldowns: null,
-      location: { kind: 'compat', groupIndex, name },
+      location: { kind: 'compat', groupIndex, name, apiKeys },
     });
   });
   return members;
@@ -331,17 +332,40 @@ export function buildRoutingConfigPatch(
       }
       // A key-level priority overrides the group's shared one for this key only.
       if (priority !== undefined) key.priority = priority;
-      if (weights) setWeight(key, weights[0] ?? null);
+      if (weights) {
+        const baselineWeight = member.weights[0]?.weight ?? null;
+        const requestedWeight = weights[0] ?? null;
+        if (requestedWeight !== baselineWeight) {
+          setWeight(key, requestedWeight);
+        }
+      }
     } else if (location.kind === 'compat') {
       const group = familyGroups(ROUTING_COMPAT_FAMILY)[location.groupIndex];
       if (!isRecord(group) || readText(group.name) !== location.name) {
         throw new RoutingConflictError();
       }
+      const latestKeys = Array.isArray(group.keys) ? group.keys : [];
+      if (latestKeys.length !== location.apiKeys.length) {
+        throw new RoutingConflictError();
+      }
+      for (let index = 0; index < latestKeys.length; index += 1) {
+        const key = latestKeys[index];
+        if (!isRecord(key) || readText(key['api-key']) !== location.apiKeys[index]) {
+          throw new RoutingConflictError();
+        }
+      }
       if (priority !== undefined) group.priority = priority;
       if (weights) {
-        const keys = (Array.isArray(group.keys) ? group.keys : []).filter(isRecord);
-        if (keys.length !== member.weights.length) throw new RoutingConflictError();
-        keys.forEach((key, index) => setWeight(key, weights[index] ?? null));
+        if (latestKeys.length !== member.weights.length) {
+          throw new RoutingConflictError();
+        }
+        for (let index = 0; index < latestKeys.length; index += 1) {
+          const baselineWeight = member.weights[index]?.weight ?? null;
+          const requestedWeight = weights[index] ?? null;
+          if (requestedWeight !== baselineWeight) {
+            setWeight(latestKeys[index] as Record<string, unknown>, requestedWeight);
+          }
+        }
       }
     }
   }
@@ -402,6 +426,22 @@ async function forEachWithConcurrency<T>(
     Array.from({ length: Math.min(MODEL_REQUEST_CONCURRENCY, items.length) }, worker)
   );
 }
+
+const readResponseHeader = (headers: unknown, name: string): string => {
+  if (!headers || typeof headers !== 'object') return '';
+  const getter = (headers as { get?: (headerName: string) => unknown }).get;
+  if (typeof getter === 'function') {
+    const value = getter.call(headers, name);
+    if (value !== undefined && value !== null) return String(value).trim();
+  }
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() === target && value !== undefined && value !== null) {
+      return String(value).trim();
+    }
+  }
+  return '';
+};
 
 export const routingApi = {
   /** The stored v8 configuration document, unnormalized. */
@@ -467,13 +507,27 @@ export const routingApi = {
     if (configTargets.length === 0) return result;
     try {
       assertConnection();
-      const latest = await routingApi.getRawConfig();
+      const response = await apiClient.getRaw('/config');
       assertConnection();
-      const patch = buildRoutingConfigPatch(latest, board, plan);
-      if (patch) await apiClient.patch('/config', patch);
+      const etag = readResponseHeader(response.headers, 'etag');
+      if (!etag) {
+        throw new RoutingConflictError();
+      }
+      const patch = buildRoutingConfigPatch(response.data, board, plan);
+      if (patch) {
+        assertConnection();
+        await apiClient.patch('/config', patch, {
+          headers: { 'If-Match': etag },
+        });
+      }
       result.applied.push(...configTargets);
-    } catch (error) {
-      result.failed = { key: 'config', error };
+    } catch (error: unknown) {
+      const conflict =
+        error instanceof RoutingConflictError || (isRecord(error) && error.status === 412);
+      result.failed = {
+        key: 'config',
+        error: conflict ? new RoutingConflictError() : error,
+      };
       result.notAttempted = configTargets;
     }
     return result;
