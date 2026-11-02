@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
   buildProviderGroups,
   buildProviderSnapshot,
 } from '../src/features/providers/useProviderWorkbench';
 import { normalizeConfigResponse } from '../src/services/api/transformers';
 import type { Config } from '../src/types';
+import en from '../src/i18n/locales/en.json';
+import tr from '../src/i18n/locales/tr.json';
 
 describe('upstream sync integration tests', () => {
   describe('retired providers in generic protocol groups', () => {
@@ -186,6 +189,38 @@ describe('upstream sync integration tests', () => {
       expect(snapshot?.fetchedAt).toBe(timestamp);
       expect(Array.isArray(snapshot?.groups)).toBe(true);
       expect(snapshot?.groups.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('routing and usage coexistence in navigation and routes', () => {
+    test('registers both /routing and /usage routes in MainRoutes', () => {
+      const mainRoutes = readFileSync('src/router/MainRoutes.tsx', 'utf8');
+      expect(mainRoutes).toContain("import { RoutingPage } from '@/features/routing/RoutingPage';");
+      expect(mainRoutes).toContain("import { UsagePage } from '@/pages/UsagePage';");
+      expect(mainRoutes).toContain("{ path: '/routing', element: <RoutingPage /> }");
+      expect(mainRoutes).toContain("{ path: '/usage', element: <UsagePage /> }");
+    });
+
+    test('retains sidebar icons and nav links for both routing and usage in MainLayout', () => {
+      const mainLayout = readFileSync('src/components/layout/MainLayout.tsx', 'utf8');
+      expect(mainLayout).toContain('routing: <IconSidebarRouting size={18} />');
+      expect(mainLayout).toContain('usage: <IconSidebarUsage size={18} />');
+      expect(mainLayout).toContain("path: '/routing'");
+      expect(mainLayout).toContain("labelKey: 'nav.routing'");
+      expect(mainLayout).toContain("path: '/usage'");
+      expect(mainLayout).toContain("labelKey: 'nav.usage_stats'");
+    });
+
+    test('preserves localization keys for both routing and usage navigation across locales', () => {
+      expect(en.nav.routing).toBe('Routing');
+      expect(en.nav.usage_stats).toBe('Usage Stats');
+      expect(en.nav_meta.routing).toBe('Priority tiers and failover');
+      expect(en.nav_meta.usage_stats).toBe('Usage & cost trends');
+
+      expect(tr.nav.routing).toBe('Yönlendirme');
+      expect(tr.nav.usage_stats).toBe('Kullanım İstatistikleri');
+      expect(tr.nav_meta.routing).toBe('Öncelik katmanları ve yük devretme');
+      expect(tr.nav_meta.usage_stats).toBe('Kullanım ve maliyet eğilimleri');
     });
   });
 });
