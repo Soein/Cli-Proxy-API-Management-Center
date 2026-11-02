@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AxiosAdapter } from 'axios';
+import { AxiosError, type AxiosAdapter } from 'axios';
 import { apiClient } from '../src/services/api/client';
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -52,4 +52,104 @@ describe('v8 management transport', () => {
     expect((events[0] as CustomEvent).detail.version).toBe('v8.0.3');
     expect((events[1] as CustomEvent).detail.supportsPlugin).toBe(true);
   });
+});
+
+test('captured SIWC transport keeps original credentials and suppresses stale events, including ABA', async () => {
+  const events: Event[] = [];
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      dispatchEvent: (event: Event) => {
+        events.push(event);
+        return true;
+      },
+    },
+  });
+  apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+  const captured = apiClient.captureConnection();
+  apiClient.setConfig({ apiBase: 'https://new.invalid', managementKey: 'new-fixture' });
+  const adapter: AxiosAdapter = async (config) => {
+    expect(config.baseURL).toBe('https://original.invalid/v8/management');
+    expect(config.headers.Authorization).toBe('Bearer original-fixture');
+    return {
+      data: {},
+      status: 200,
+      statusText: 'OK',
+      config,
+      headers: { 'x-cpa-version': 'old', 'x-cpa-support-plugin': 'true' },
+    };
+  };
+  await captured.delete('/oauth/session', { params: { state: 'original-session' }, adapter });
+  apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+  await captured.delete('/oauth/session', { params: { state: 'original-session' }, adapter });
+  expect(events).toEqual([]);
+  const unauthorized: AxiosAdapter = async (config) => {
+    throw { isAxiosError: true, message: 'Unauthorized', config, response: { status: 401 } };
+  };
+  await expect(captured.delete('/oauth/session', { adapter: unauthorized })).rejects.toThrow();
+  expect(events).toEqual([]);
+});
+
+test('ordinary v8 writes abort if the connection changes before dispatch, including ABA', async () => {
+  apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+  let dispatched = false;
+  const adapter: AxiosAdapter = async (config) => {
+    dispatched = true;
+    return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+  };
+  const request = apiClient.patch('/config', { routing: { strategy: 'fill-first' } }, { adapter });
+  apiClient.setConfig({ apiBase: 'https://new.invalid', managementKey: 'new-fixture' });
+  apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+
+  await expect(request).rejects.toHaveProperty('code', 'ERR_CANCELED');
+  expect(dispatched).toBe(false);
+});
+
+test.each([200, 401])(
+  'ordinary stale v8 responses (%s) do not dispatch session events',
+  async (status) => {
+    const events: string[] = [];
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { dispatchEvent: (event: Event) => events.push(event.type) },
+    });
+    apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+    const adapter: AxiosAdapter = async (config) => {
+      apiClient.setConfig({ apiBase: 'https://new.invalid', managementKey: 'new-fixture' });
+      const response = {
+        data: {},
+        status,
+        statusText: status === 200 ? 'OK' : 'Unauthorized',
+        headers: { 'x-cpa-version': 'stale', 'x-cpa-support-plugin': 'true' },
+        config,
+      };
+      if (status === 401)
+        throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, null, response);
+      return response;
+    };
+
+    await expect(apiClient.get('/config', { adapter })).rejects.toThrow();
+    expect(events).toEqual([]);
+  }
+);
+
+test('captured connections preserve extension URL, timeout and caller cancellation signal', async () => {
+  apiClient.setConfig({
+    apiBase: 'https://original.invalid/gateway',
+    managementKey: 'original-fixture',
+    timeout: 12345,
+  });
+  const captured = apiClient.captureConnection();
+  const controller = new AbortController();
+  apiClient.setConfig({ apiBase: 'https://new.invalid', managementKey: 'new-fixture' });
+  const adapter: AxiosAdapter = async (config) => {
+    expect(config.baseURL).toBe('https://original.invalid/gateway/v0/management');
+    expect(config.headers.Authorization).toBe('Bearer original-fixture');
+    expect(config.timeout).toBe(12345);
+    expect(config.signal).toBe(controller.signal);
+    return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config };
+  };
+  await expect(
+    captured.get('/usage', { useV0Management: true, signal: controller.signal, adapter })
+  ).resolves.toEqual({ ok: true });
 });

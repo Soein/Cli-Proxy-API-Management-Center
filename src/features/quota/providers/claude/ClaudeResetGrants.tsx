@@ -15,7 +15,12 @@ import {
 } from '@/services/api/claudeResetGrants';
 import type { AuthFileItem } from '@/types';
 import { normalizeAuthIndex } from '@/utils/quota';
-import { resetGrantOperations, RETRY_WINDOW_MS } from './resetGrantOperations';
+import {
+  resetGrantOperations,
+  RETRY_WINDOW_MS,
+  ResetGrantPreflightError,
+  resetGrantFailureMessageKey,
+} from './resetGrantOperations';
 import { selectResetGrant } from './selectResetGrant';
 import { readResetGrantsForCard, scheduleResetGrantRead } from './resetGrantReads';
 
@@ -106,10 +111,10 @@ export function useClaudeResetGrants(
     if (blocked || lock.current || !selected || !authIndex) return;
     const version = generation.current;
     const cacheSnapshot = captureQuotaCacheGeneration(file.name);
-    const current = () =>
+    const isCredentialCurrent = () =>
       session === apiClient.getConnectionRevision() &&
-      version === generation.current &&
       commitIfQuotaCacheCurrent(cacheSnapshot, () => {}, file.name);
+    const current = () => isCredentialCurrent() && version === generation.current;
     showConfirmation({
       title: t('claude_reset.title'),
       message: t(pending ? 'claude_reset.retry_confirm' : 'claude_reset.confirm_text', {
@@ -123,19 +128,36 @@ export function useClaudeResetGrants(
         lock.current = true;
         setBusy(true);
         try {
-          const answer = await resetGrantOperations.run(key, authIndex, selected);
+          const answer = await resetGrantOperations.run(
+            key,
+            authIndex,
+            selected,
+            isCredentialCurrent
+          );
           if (!current()) return;
           showNotification(
-            t(`claude_reset.${answer.unresolved ? 'unknown' : answer.code}`),
+            answer.code === 'cooldown_clear_failed'
+              ? t('auth_files.cooldown_reset_failed', {
+                  name: file.name,
+                  message: t('common.unknown_error'),
+                })
+              : t(`claude_reset.${answer.unresolved ? 'unknown' : answer.code}`),
             !answer.unresolved && (answer.code === 'reset' || answer.code === 'already_used')
               ? 'success'
               : 'error'
           );
-        } catch {
+        } catch (error: unknown) {
           if (!current()) return;
           const unresolved = resetGrantOperations.inspect(key);
           showNotification(
-            t(`claude_reset.${unresolved && !unresolved.code ? 'unknown' : 'blocked'}`),
+            t(
+              unresolved && !unresolved.code
+                ? 'claude_reset.unknown'
+                : resetGrantFailureMessageKey(error),
+              {
+                code: error instanceof ResetGrantPreflightError ? error.reason : '',
+              }
+            ),
             'error'
           );
         } finally {
