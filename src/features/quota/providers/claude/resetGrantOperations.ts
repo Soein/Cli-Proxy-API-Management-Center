@@ -52,6 +52,8 @@ export type ResetGrantResult =
   | { code: AnthropicResetSettledCode; unresolved: boolean }
   | { code: 'cooldown_clear_failed'; unresolved: false };
 
+export type ResetGrantGuard = (() => boolean) | { isCurrent?: () => boolean };
+
 const defaultDependencies = {
   revision: () => apiClient.getConnectionRevision(),
   readStatus: readClaudeResetGrants,
@@ -83,7 +85,16 @@ export function createResetGrantOperations(deps = defaultDependencies) {
       syncSession();
       return operations.get(key);
     },
-    async run(key: string, authIndex: string, grantId: string): Promise<ResetGrantResult> {
+    async run(
+      key: string,
+      authIndex: string,
+      grantId: string,
+      guard?: ResetGrantGuard
+    ): Promise<ResetGrantResult> {
+      const isCurrent = typeof guard === 'function' ? guard : (guard?.isCurrent ?? (() => true));
+      const assertCurrent = () => {
+        if (!isCurrent()) throw new ResetGrantPreflightError('operation', 'identity');
+      };
       const session = syncSession();
       const assertSession = () => {
         if (deps.revision() !== session) throw new ResetGrantPreflightError('operation', 'session');
@@ -99,15 +110,18 @@ export function createResetGrantOperations(deps = defaultDependencies) {
         )
           throw new ResetGrantPreflightError('operation', 'expired');
         const wasRetry = Boolean(operation);
+        assertCurrent();
         const organization = await readPreflight('organization', () =>
           deps.readOrganization(authIndex)
         );
         assertSession();
+        assertCurrent();
         if (operation && operation.organization !== organization)
           throw new ResetGrantPreflightError('operation', 'identity');
         if (!operation) {
           const status = await readPreflight('status', () => deps.readStatus(authIndex));
           assertSession();
+          assertCurrent();
           const grant = status.grants.find((item) => item.id === grantId);
           const now = deps.now();
           const blocker = anthropicResetGrantBlocker(status, grantId);
@@ -134,6 +148,7 @@ export function createResetGrantOperations(deps = defaultDependencies) {
         }
         // Re-check immediately before dispatch; never send against a replacement connection.
         assertSession();
+        assertCurrent();
         if (wasRetry && deps.now() - operation.createdAt >= RETRY_WINDOW_MS) {
           throw new ResetGrantPreflightError('operation', 'expired');
         }
@@ -142,15 +157,17 @@ export function createResetGrantOperations(deps = defaultDependencies) {
         // A refusal on a retry cannot prove that the earlier ambiguous POST did not spend.
         if (!wasRetry || code === 'reset' || code === 'already_used') operation.code = code;
         if (code === 'reset' || code === 'already_used') {
-          try {
-            const result = await deps.resetCooldown(authIndex);
-            assertSession();
-            if (result.status !== 'ok' || result.auth_index !== authIndex) {
-              throw new Error('Invalid cooldown reset response');
+          if (isCurrent()) {
+            try {
+              const result = await deps.resetCooldown(authIndex);
+              assertSession();
+              if (result.status !== 'ok' || result.auth_index !== authIndex) {
+                throw new Error('Invalid cooldown reset response');
+              }
+            } catch {
+              assertSession();
+              return { code: 'cooldown_clear_failed', unresolved: false };
             }
-          } catch {
-            assertSession();
-            return { code: 'cooldown_clear_failed', unresolved: false };
           }
         }
         return { code, unresolved: !operation.code };

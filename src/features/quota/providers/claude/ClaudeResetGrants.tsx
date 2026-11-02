@@ -111,10 +111,10 @@ export function useClaudeResetGrants(
     if (blocked || lock.current || !selected || !authIndex) return;
     const version = generation.current;
     const cacheSnapshot = captureQuotaCacheGeneration(file.name);
-    const current = () =>
+    const isCredentialCurrent = () =>
       session === apiClient.getConnectionRevision() &&
-      version === generation.current &&
       commitIfQuotaCacheCurrent(cacheSnapshot, () => {}, file.name);
+    const current = () => isCredentialCurrent() && version === generation.current;
     showConfirmation({
       title: t('claude_reset.title'),
       message: t(pending ? 'claude_reset.retry_confirm' : 'claude_reset.confirm_text', {
@@ -128,7 +128,12 @@ export function useClaudeResetGrants(
         lock.current = true;
         setBusy(true);
         try {
-          const answer = await resetGrantOperations.run(key, authIndex, selected);
+          const answer = await resetGrantOperations.run(
+            key,
+            authIndex,
+            selected,
+            isCredentialCurrent
+          );
           if (!current()) return;
           showNotification(
             answer.code === 'cooldown_clear_failed'
