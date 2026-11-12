@@ -83,13 +83,35 @@ const resolveBearerTokenFromAuthorization = (headers: Record<string, string>): s
   return match?.[1]?.trim() || '';
 };
 
+export interface ModelCatalogRefreshResult {
+  changedProviders: string[];
+}
+
+const normalizeChangedProviders = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+
+/** Read partial catalog changes without replacing or mutating the rejected API error. */
+export const getModelCatalogRefreshFailure = (error: unknown): ModelCatalogRefreshResult => {
+  const source = isRecord(error)
+    ? isRecord(error.data)
+      ? error.data
+      : isRecord(error.details)
+        ? error.details
+        : undefined
+    : undefined;
+  return { changedProviders: normalizeChangedProviders(source?.changed_providers) };
+};
+
 export const modelsApi = {
   /** Refresh the global backend catalogs, not auth-file credentials. */
-  async refreshCatalog(): Promise<{ changedProviders: string[] }> {
-    const response = await apiClient.post<{ changed_providers: string[] | null }>(
-      '/models/refresh'
-    );
-    return { changedProviders: response.changed_providers ?? [] };
+  async refreshCatalog(): Promise<ModelCatalogRefreshResult> {
+    const response = await apiClient.post<{ changed_providers: unknown }>('/models/refresh');
+    return { changedProviders: normalizeChangedProviders(response.changed_providers) };
   },
 
   /**

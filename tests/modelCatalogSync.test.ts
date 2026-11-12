@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
-import { modelsApi } from '../src/services/api/models';
+import { getModelCatalogRefreshFailure, modelsApi } from '../src/services/api/models';
 import { apiClient } from '../src/services/api/client';
 
 const read = (path: string) => readFileSync(path, 'utf8');
@@ -10,7 +10,7 @@ const hook = read('src/features/authFiles/hooks/useModelCatalogSync.ts');
 function harness() {
   let revision = 1;
   let resolve!: (value: { changedProviders: string[] }) => void;
-  let reject!: (error: Error) => void;
+  let reject!: (error: unknown) => void;
   let calls = 0;
   let invalidations = 0;
   let refetches = 0;
@@ -32,6 +32,7 @@ function harness() {
         });
       },
     },
+    getModelCatalogRefreshFailure,
     useModelsStore: { getState: () => ({ clearCache: () => invalidations++ }) },
     onSyncedRef: { current: () => refetches++ },
     setSyncingModelCatalog: (value: boolean) => {
@@ -47,7 +48,7 @@ function harness() {
   return {
     sync: new Function(...Object.keys(env), js)(...Object.values(env)) as () => Promise<void>,
     resolve: (providers: string[]) => resolve({ changedProviders: providers }),
-    reject: () => reject(new Error('fixture failure')),
+    reject: (error: unknown = new Error('fixture failure')) => reject(error),
     switchConnection: () => revision++,
     unmount: () => {
       mountedRef.current = false;
@@ -112,11 +113,58 @@ describe('global model catalog sync', () => {
       'error',
     ]);
     expect(h.invalidations).toBe(0);
+    expect(h.refetches).toBe(0);
     expect(h.loading).toBe(false);
     const retry = h.sync();
     h.resolve([]);
     await retry;
     expect(h.calls).toBe(2);
+  });
+
+  test('keeps valid caches when failure has empty changed_providers', async () => {
+    const h = harness();
+    const pending = h.sync();
+    h.reject(
+      Object.assign(new Error('502 Bad Gateway'), {
+        data: { changed_providers: [] },
+      })
+    );
+    await pending;
+    expect(h.notifications[0]).toEqual([
+      'auth_files.sync_catalog_failed: 502 Bad Gateway',
+      'error',
+    ]);
+    expect(h.invalidations).toBe(0);
+    expect(h.refetches).toBe(0);
+    expect(h.loading).toBe(false);
+  });
+
+  test('invalidates cache and refetches on partial failure while showing error and allowing retry', async () => {
+    const h = harness();
+    const pending = h.sync();
+    await h.sync();
+    expect(h.calls).toBe(1);
+    expect(h.loading).toBe(true);
+    h.reject(
+      Object.assign(new Error('Codex catalog unavailable'), {
+        data: { changed_providers: [' claude ', null, ''] },
+      })
+    );
+    await pending;
+    expect(h.loading).toBe(false);
+    expect(h.invalidations).toBe(1);
+    expect(h.refetches).toBe(1);
+    expect(h.notifications[0]).toEqual([
+      'auth_files.sync_catalog_failed: Codex catalog unavailable',
+      'error',
+    ]);
+    const retry = h.sync();
+    expect(h.calls).toBe(2);
+    h.resolve([]);
+    await retry;
+    expect(h.loading).toBe(false);
+    expect(h.invalidations).toBe(2);
+    expect(h.refetches).toBe(2);
   });
 
   for (const stale of ['switchConnection', 'unmount'] as const) {
@@ -133,6 +181,22 @@ describe('global model catalog sync', () => {
         expect(h.refetches).toBe(0);
       });
     }
+
+    test(`ignores stale partial failure after ${stale}`, async () => {
+      const h = harness();
+      const pending = h.sync();
+      h[stale]();
+      h.reject(
+        Object.assign(new Error('Codex catalog unavailable'), {
+          details: { changed_providers: ['claude'] },
+        })
+      );
+      await pending;
+      expect(h.notifications).toEqual([]);
+      expect(h.invalidations).toBe(0);
+      expect(h.refetches).toBe(0);
+      expect(h.loading).toBe(stale === 'unmount');
+    });
   }
 
   test('places secondary sync first and wires model-only cache refresh', () => {

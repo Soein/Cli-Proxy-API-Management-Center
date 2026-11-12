@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { apiClient, modelsApi } from '@/services/api';
+import { apiClient, getModelCatalogRefreshFailure, modelsApi } from '@/services/api';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { useModelsStore } from '@/stores/useModelsStore';
 
@@ -42,6 +42,11 @@ export function useModelCatalogSync(onSynced: () => void) {
       );
     } catch (error: unknown) {
       if (!isCurrent()) return;
+      const { changedProviders } = getModelCatalogRefreshFailure(error);
+      if (changedProviders.length > 0) {
+        useModelsStore.getState().clearCache();
+        onSyncedRef.current();
+      }
       showNotification(
         `${t('auth_files.sync_catalog_failed')}: ${error instanceof Error ? error.message : String(error)}`,
         'error'
