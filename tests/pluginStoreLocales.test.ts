@@ -46,6 +46,43 @@ const storeEntry = (overrides: Partial<PluginStoreEntry>): PluginStoreEntry => (
 });
 
 describe('plugin store entry normalization', () => {
+  test('decodes every Go-escaped locale field once without changing root metadata', async () => {
+    mockGet({
+      plugins: [
+        {
+          id: 'escaped',
+          name: 'Root &amp; unchanged',
+          locales: {
+            'zh-CN': {
+              name: ' A &amp; B &#34;Plugin&#34; ',
+              description: 'Use &#39;single&#39; &lt;b&gt;literal&lt;/b&gt; &amp;lt; once',
+              author: ' O&#39;Connor &amp; Co ',
+              homepage: 'https://example.invalid/?a=1&amp;b=2&amp;label=&#34;x&#34;',
+              license: ' MIT &amp; &#34;More&#34; ',
+              tags: [' A &amp; B ', '&#39;quoted&#39;', '&amp;lt;', ' '],
+            },
+          },
+        },
+      ],
+    });
+
+    const [entry] = (await pluginStoreApi.list()).plugins;
+    expect(entry.name).toBe('Root &amp; unchanged');
+    expect(entry.locales?.['zh-CN']).toEqual({
+      name: 'A & B "Plugin"',
+      description: "Use 'single' <b>literal</b> &lt; once",
+      author: "O'Connor & Co",
+      homepage: 'https://example.invalid/?a=1&b=2&label="x"',
+      license: 'MIT & "More"',
+      tags: ['A & B', "'quoted'", '&lt;'],
+    });
+    const display = getStoreEntryDisplay(entry, 'zh-CN');
+    const homepage = new URL(display.homepage);
+    expect(homepage.searchParams.get('b')).toBe('2');
+    expect(homepage.searchParams.get('label')).toBe('"x"');
+    expect(homepage.searchParams.has('amp;b')).toBe(false);
+  });
+
   test('keeps backend locales on normalized entries', async () => {
     mockGet({
       plugins_enabled: true,
@@ -134,8 +171,10 @@ describe('store entry display metadata', () => {
   test('tags only switch when the matched locale carries its own list', () => {
     expect(getStoreEntryDisplay(entry, 'zh-CN').tags).toEqual(['Interceptor']);
     expect(
-      getStoreEntryDisplay(storeEntry({ locales: { 'zh-CN': { tags: [' 拦截器 ', ''] } } }), 'zh-CN')
-        .tags
+      getStoreEntryDisplay(
+        storeEntry({ locales: { 'zh-CN': { tags: [' 拦截器 ', ''] } } }),
+        'zh-CN'
+      ).tags
     ).toEqual(['拦截器']);
   });
 
@@ -164,9 +203,7 @@ describe('store entry display metadata', () => {
       license: 'MIT',
       tags: ['Interceptor'],
     });
-    expect(getStoreEntryDisplay(entry, 'xx')).toEqual(
-      getStoreEntryDisplay(storeEntry({}), 'en')
-    );
+    expect(getStoreEntryDisplay(entry, 'xx')).toEqual(getStoreEntryDisplay(storeEntry({}), 'en'));
   });
 });
 

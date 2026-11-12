@@ -215,13 +215,13 @@ const normalizeStoreLocales = (value: unknown): Record<string, PluginStoreLocale
     const key = rawKey.trim();
     const locale = isRecord(rawLocale) ? rawLocale : {};
     const tags = Array.isArray(locale.tags)
-      ? locale.tags.map((item) => asString(item).trim()).filter(Boolean)
+      ? locale.tags.map(decodePluginEntryText).filter(Boolean)
       : [];
-    const name = asString(locale.name).trim();
-    const description = asString(locale.description).trim();
-    const author = asString(locale.author).trim();
-    const homepage = asString(locale.homepage).trim();
-    const license = asString(locale.license).trim();
+    const name = decodePluginEntryText(locale.name);
+    const description = decodePluginEntryText(locale.description);
+    const author = decodePluginEntryText(locale.author);
+    const homepage = decodePluginEntryText(locale.homepage);
+    const license = decodePluginEntryText(locale.license);
     const normalized: PluginStoreLocale = {
       ...(name ? { name } : {}),
       ...(description ? { description } : {}),
