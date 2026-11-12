@@ -9,6 +9,99 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, 'window');
 });
 
+test('captured mutation transport also suppresses events when its session expires on the same connection', async () => {
+  const events: string[] = [];
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      dispatchEvent: (event: Event) => {
+        events.push(event.type);
+        return true;
+      },
+    },
+  });
+  apiClient.setConfig({ apiBase: 'https://proxy.invalid', managementKey: 'fixture-only' });
+  let current = true;
+  const captured = apiClient.captureConnection(() => current);
+  current = false;
+  const adapter: AxiosAdapter = async (config) => ({
+    data: {},
+    status: 200,
+    statusText: 'OK',
+    config,
+    headers: { 'x-cpa-version': 'stale', 'x-cpa-support-plugin': 'true' },
+  });
+  await captured.post('/requests/api-call', {}, { adapter });
+  const unauthorized: AxiosAdapter = async (config) => {
+    throw { isAxiosError: true, message: 'Unauthorized', config, response: { status: 401 } };
+  };
+  await expect(
+    captured.post('/requests/api-call', {}, { adapter: unauthorized })
+  ).rejects.toThrow();
+  expect(events).toEqual([]);
+});
+
+test('captured mutation transport preserves the configured timeout', async () => {
+  apiClient.setConfig({
+    apiBase: 'https://proxy.invalid',
+    managementKey: 'fixture-only',
+    timeout: 45000,
+  });
+  const captured = apiClient.captureConnection();
+  const adapter: AxiosAdapter = async (config) => {
+    expect(config.timeout).toBe(45000);
+    return { data: {}, status: 200, statusText: 'OK', config, headers: {} };
+  };
+  await captured.post('/requests/api-call', {}, { adapter });
+});
+
+test.each(['active', 'connection changed', 'parent expired', 'child expired'] as const)(
+  'nested captured transport retains event ownership when %s',
+  async (ownership) => {
+    const events: string[] = [];
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { dispatchEvent: (event: Event) => events.push(event.type) },
+    });
+    apiClient.setConfig({ apiBase: 'https://original.invalid', managementKey: 'original-fixture' });
+    let parentCurrent = true;
+    let childCurrent = true;
+    const captured = apiClient
+      .captureConnection(() => parentCurrent)
+      .captureConnection(() => childCurrent);
+    const adapter: AxiosAdapter = async (config) => {
+      expect(config.baseURL).toBe('https://original.invalid/v8/management');
+      expect(config.headers.Authorization).toBe('Bearer original-fixture');
+      if (ownership === 'connection changed') {
+        apiClient.setConfig({ apiBase: 'https://new.invalid', managementKey: 'new-fixture' });
+      }
+      if (ownership === 'parent expired') parentCurrent = false;
+      if (ownership === 'child expired') childCurrent = false;
+      return {
+        data: { ok: true },
+        status: 200,
+        statusText: 'OK',
+        config,
+        headers: { 'x-cpa-version': 'fixture', 'x-cpa-support-plugin': 'true' },
+      };
+    };
+    await expect(captured.post('/requests/api-call', {}, { adapter })).resolves.toEqual({
+      ok: true,
+    });
+    const unauthorized: AxiosAdapter = async (config) => {
+      throw { isAxiosError: true, message: 'Unauthorized', config, response: { status: 401 } };
+    };
+    await expect(
+      captured.post('/requests/api-call', {}, { adapter: unauthorized })
+    ).rejects.toThrow();
+    expect(events).toEqual(
+      ownership === 'active'
+        ? ['server-version-update', 'server-plugin-support-update', 'unauthorized']
+        : []
+    );
+  }
+);
+
 describe('v8 management transport', () => {
   test('uses the v8 prefix, bearer authentication and bare JSON scalar writes', async () => {
     apiClient.setConfig({
