@@ -12,10 +12,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi } from '@/services/api';
 import { Button } from '@/components/ui/Button';
+import { CardLayoutSwitch } from '@/components/ui/CardLayoutSwitch';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconSearch, IconX } from '@/components/ui/icons';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { StackedColumns } from '@/components/ui/StackedColumns';
+import { readCardLayout, writeCardLayout, type CardLayout } from '@/components/ui/cardLayout';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useNow } from '@/hooks/useNow';
 import { useRevealGroup } from '@/hooks/motion';
@@ -29,7 +32,10 @@ import { QuotaCard } from './components/QuotaCard';
 import { QuotaTimeline } from './components/QuotaTimeline';
 import {
   CARD_ENTRANCE_BUDGET_MS,
+  QUOTA_CARD_LAYOUT_KEY,
+  QUOTA_COMPACT_COLUMNS,
   QUOTA_PAGE_SIZE,
+  QUOTA_STACKED_COLUMNS,
   QUOTA_SORT_MODES,
   QUOTA_TAB_ORDER,
   type QuotaSortMode,
@@ -81,6 +87,9 @@ export function QuotaPage() {
   );
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [layout, setLayout] = useState<CardLayout>(() => readCardLayout(QUOTA_CARD_LAYOUT_KEY));
+  // Compact cards the user opened to full size; not persisted.
+  const [expandedCards, setExpandedCards] = useState<ReadonlySet<string>>(() => new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const filesRequestGateRef = useRef(createRequestGate());
   // 页头 + tabs 的入场级联（标题 → meta → 动作 → tabs，级差 70ms）
@@ -228,6 +237,19 @@ export function QuotaPage() {
     writeQuotaUiState({ sortMode: next as QuotaSortMode });
   }, []);
 
+  const handleLayoutChange = useCallback((next: CardLayout) => {
+    setLayout(next);
+    writeCardLayout(QUOTA_CARD_LAYOUT_KEY, next);
+  }, []);
+
+  const toggleExpandedCard = useCallback((key: string) => {
+    setExpandedCards((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
+
   const sortOptions = useMemo(
     () =>
       QUOTA_SORT_MODES.map((mode) => ({ value: mode, label: t(`quota_management.sort_${mode}`) })),
@@ -339,6 +361,31 @@ export function QuotaPage() {
 
   /* ---------- 渲染 ---------- */
 
+  const cardKey = (entry: QuotaFileEntry) => `${entry.type}:${getQuotaCacheKey(entry.file)}`;
+  const renderCard = (entry: QuotaFileEntry, index: number) => {
+    const key = cardKey(entry);
+    return (
+      <QuotaCard
+        key={key}
+        entry={entry}
+        quota={getQuota(entry)}
+        resolvedTheme={resolvedTheme}
+        canRefresh={canUseActions && !entry.file.disabled}
+        resetting={isResettingQuota(getQuotaCacheKey(entry.file))}
+        entranceDelayMs={cardEntranceDelay(index)}
+        creditOverageSharedCount={
+          entry.type === 'codex'
+            ? codexCreditOverageCounts.get(codexCreditOverageKey(entry.file) ?? '')
+            : undefined
+        }
+        glance={layout === 'compact' ? !expandedCards.has(key) : undefined}
+        onToggleGlance={() => toggleExpandedCard(key)}
+        onRefresh={() => void refreshQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
+        onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
+      />
+    );
+  };
+
   const isEmpty = !loading && filteredEntries.length === 0;
 
   return (
@@ -391,14 +438,17 @@ export function QuotaPage() {
               </button>
             )}
           </div>
-          <div className={styles.sort}>
-            <Select
-              value={sortMode}
-              options={sortOptions}
-              onChange={handleSortModeChange}
-              ariaLabel={t('quota_management.sort_label')}
-              size="sm"
-            />
+          <div className={styles.viewControls}>
+            <div className={styles.sort}>
+              <Select
+                value={sortMode}
+                options={sortOptions}
+                onChange={handleSortModeChange}
+                ariaLabel={t('quota_management.sort_label')}
+                size="sm"
+              />
+            </div>
+            <CardLayoutSwitch value={layout} onChange={handleLayoutChange} />
           </div>
         </div>
 
@@ -443,26 +493,17 @@ export function QuotaPage() {
             }
           />
         ) : (
-          <div className={styles.grid}>
-            {pageItems.map((entry, index) => (
-              <QuotaCard
-                key={`${entry.type}:${getQuotaCacheKey(entry.file)}`}
-                entry={entry}
-                quota={getQuota(entry)}
-                resolvedTheme={resolvedTheme}
-                canRefresh={canUseActions && !entry.file.disabled}
-                resetting={isResettingQuota(getQuotaCacheKey(entry.file))}
-                entranceDelayMs={cardEntranceDelay(index)}
-                creditOverageSharedCount={
-                  entry.type === 'codex'
-                    ? codexCreditOverageCounts.get(codexCreditOverageKey(entry.file) ?? '')
-                    : undefined
-                }
-                onRefresh={() => void refreshQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
-                onReset={() => resetQuota(entry.file, QUOTA_ADAPTERS[entry.type])}
-              />
-            ))}
-          </div>
+          // One container for every layout, so switching layouts never remounts the cards.
+          <StackedColumns
+            stacked={layout !== 'even'}
+            className={layout === 'even' ? styles.grid : undefined}
+            {...(layout === 'compact' ? QUOTA_COMPACT_COLUMNS : QUOTA_STACKED_COLUMNS)}
+            items={pageItems.map((entry, index) => ({
+              key: cardKey(entry),
+              node: renderCard(entry, index),
+              settled: getQuota(entry)?.status !== 'loading',
+            }))}
+          />
         )}
 
         {!loading && filteredEntries.length > QUOTA_PAGE_SIZE && (

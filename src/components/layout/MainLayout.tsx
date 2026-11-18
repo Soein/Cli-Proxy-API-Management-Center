@@ -28,7 +28,6 @@ import {
   IconSidebarQuickStart,
   IconSidebarQuota,
   IconSidebarRouting,
-  IconSidebarStore,
   IconSidebarSystem,
   IconSidebarUsage,
   IconChevronDown,
@@ -66,7 +65,6 @@ const sidebarIcons: Record<string, ReactNode> = {
   routing: <IconSidebarRouting size={18} />,
   usage: <IconSidebarUsage size={18} />,
   plugins: <IconSidebarPlugins size={18} />,
-  pluginStore: <IconSidebarStore size={18} />,
   config: <IconSidebarConfig size={18} />,
   logs: <IconSidebarLogs size={18} />,
   system: <IconSidebarSystem size={18} />,
@@ -690,12 +688,6 @@ export function MainLayout() {
                 metaKey: 'nav_meta.plugins',
                 icon: sidebarIcons.plugins,
               },
-              {
-                path: '/plugin-store',
-                labelKey: 'nav.plugin_store',
-                metaKey: 'nav_meta.plugin_store',
-                icon: sidebarIcons.pluginStore,
-              },
             ]
           : []),
         {
@@ -1174,7 +1166,6 @@ export function MainLayout() {
               {showSidebarLabels && (
                 <span className="sidebar-brand-text">
                   <span className="sidebar-brand-title">{abbrBrandName}</span>
-                  <span className="sidebar-brand-subtitle">{t('sidebar.subtitle')}</span>
                 </span>
               )}
             </div>

@@ -174,11 +174,12 @@
   }
 }
 
+/* 只剩标题（分组说明在标题后的 InfoTip 里）：单行，图标与小号大写标题居中对齐 */
 .antigravityQuotaGroupHeader {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
   min-width: 0;
+  line-height: 1.4;
 }
 
 .antigravityQuotaGroupTitle {
@@ -188,12 +189,6 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-tertiary);
-}
-
-.antigravityQuotaGroupDescription {
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-quaternary);
 }
 
 @include mobile {
@@ -215,6 +210,44 @@
   .quotaBarFill {
     transition: none;
     animation: none;
+  }
+}
+
+/* ---------- Compact layout: glance card ----------
+ * QuotaCard sets data-quota-glance in the Compact layout. A glance keeps the plan and one line
+ * per limit (name, percent, bar); reset times, amounts, credit lists and the group InfoTips
+ * stay in the full card, which the card's details toggle opens. */
+
+[data-quota-glance] {
+  .quotaRow {
+    gap: 3px;
+  }
+
+  /* A glance row is only a name and a percent: keep it on one line on phones too. */
+  .quotaRowHeader {
+    flex-direction: row;
+    align-items: baseline;
+  }
+
+  .quotaModel {
+    width: auto;
+    @include text-ellipsis;
+  }
+
+  // Keep status/error notices visible: they can warn that displayed quotas are stale.
+  .quotaReset,
+  .quotaResetRelative,
+  .quotaAmount,
+  .codexResetCredits,
+  .antigravityQuotaGroupHeader [data-info-tip],
+  .codexPlanLabel,
+  .codexPlanItem:not([data-quota-plan]) {
+    display: none;
+  }
+
+  /* Own rule: a browser without :has() drops only this one, not the rules above. */
+  .codexPlan:not(:has([data-quota-plan])) {
+    display: none;
   }
 }
 

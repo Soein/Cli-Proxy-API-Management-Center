@@ -109,8 +109,9 @@ export const getModelCatalogRefreshFailure = (error: unknown): ModelCatalogRefre
 
 export const modelsApi = {
   /** Refresh the global backend catalogs, not auth-file credentials. */
-  async refreshCatalog(): Promise<ModelCatalogRefreshResult> {
-    const response = await apiClient.post<{ changed_providers: unknown }>('/models/refresh');
+  async refreshCatalog(isCurrent?: () => boolean): Promise<ModelCatalogRefreshResult> {
+    const client = isCurrent ? apiClient.captureConnection(isCurrent) : apiClient;
+    const response = await client.post<{ changed_providers: unknown }>('/models/refresh');
     return { changedProviders: normalizeChangedProviders(response.changed_providers) };
   },
 
@@ -347,6 +348,9 @@ export const modelsApi = {
           const resolved = { ...model, name };
           if (resolved.alias && resolved.alias.trim() === name) {
             resolved.alias = undefined;
+          }
+          if (resolved.displayName?.trim() === name) {
+            resolved.displayName = undefined;
           }
           collected.push(resolved);
         });
