@@ -25,6 +25,10 @@ import {
   updateAliasRow,
 } from '../src/features/authFiles/modelRules/draft';
 import { runSavePlan } from '../src/features/authFiles/modelRules/useModelRulesData';
+import {
+  normalizeOauthModelAlias,
+  serializeOauthModelAliases,
+} from '../src/services/api/authFiles';
 
 const ids = () => {
   let next = 0;
@@ -98,7 +102,7 @@ describe('alias draft', () => {
     draft = addAliasRow(draft, 'codex', makeId);
     draft = updateAliasRow(draft, 'codex', draft.codex[2].id, { name: 'half' });
     draft = addAliasRow(draft, 'codex', makeId);
-    draft = updateAliasRow(draft, 'codex', draft.codex[3].id, { name: 'same', alias: 'SAME' });
+    draft = updateAliasRow(draft, 'codex', draft.codex[3].id, { name: ' same ', alias: 'same' });
     draft = addAliasRow(draft, 'codex', makeId);
 
     const [, duplicate, incomplete, same, blank] = draft.codex;
@@ -113,6 +117,59 @@ describe('alias draft', () => {
       issue: 'duplicate',
     });
     expect(findAliasDraftIssue(draft, ['claude'])).toBeNull();
+  });
+
+  test('permits name/alias differing only in capitalization while keeping case-insensitive duplicate policy', () => {
+    const makeId = ids();
+    const initial = {
+      claude: [{ name: 'Claude-Opus-4', alias: 'claude-opus-4' }],
+    };
+    let draft = buildAliasDraft(initial, makeId);
+
+    // Existing valid casing-only mapping + unrelated edit on the same provider
+    draft = addAliasRow(draft, 'claude', makeId);
+    draft = updateAliasRow(draft, 'claude', draft.claude[1].id, {
+      name: 'claude-sonnet-4',
+      alias: 'Sonnet',
+    });
+    expect(getAliasRowIssues(draft.claude)).toEqual({});
+    expect(findAliasDraftIssue(draft, ['claude'])).toBeNull();
+
+    // Creating a new casing-only mapping on another provider
+    draft = addAliasLink(draft, 'codex', 'gpt-5', 'GPT-5', makeId);
+    expect(getAliasRowIssues(draft.codex)).toEqual({});
+    expect(findAliasDraftIssue(draft, ['claude', 'codex'])).toBeNull();
+
+    // Case-insensitive duplicate alias is still flagged
+    const withDuplicate = addAliasLink(draft, 'codex', 'gpt-5-mini', 'gpt-5', makeId);
+    expect(getAliasRowIssues(withDuplicate.codex)).toEqual({
+      [withDuplicate.codex[1].id]: 'duplicate',
+    });
+
+    // Save plan + API normalization/serialization preserve original casing
+    const plan = buildAliasSavePlan(initial, draft);
+    expect(plan).toEqual([
+      {
+        provider: 'claude',
+        value: [
+          { name: 'Claude-Opus-4', alias: 'claude-opus-4' },
+          { name: 'claude-sonnet-4', alias: 'Sonnet', fork: true },
+        ],
+      },
+      {
+        provider: 'codex',
+        value: [{ name: 'gpt-5', alias: 'GPT-5', fork: true }],
+      },
+    ]);
+    const map = toAliasMap(draft);
+    expect(normalizeOauthModelAlias(map)).toEqual(map);
+    expect(serializeOauthModelAliases(map.claude)).toEqual([
+      { name: 'Claude-Opus-4', alias: 'claude-opus-4' },
+      { name: 'claude-sonnet-4', alias: 'Sonnet', fork: true },
+    ]);
+    expect(serializeOauthModelAliases(map.codex)).toEqual([
+      { name: 'gpt-5', alias: 'GPT-5', fork: true },
+    ]);
   });
 
   test('diagram operations address links case-insensitively and stay idempotent', () => {

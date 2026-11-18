@@ -3,6 +3,7 @@ import { createElement, useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { parse as parseYaml } from 'yaml';
 import { useVisualConfig, getPayloadReplaceValidationError } from '../src/hooks/useVisualConfig';
+import { ConfigDraftConflictError } from '../src/services/api/configPatch';
 import type { VisualConfigValues } from '../src/types/visualConfig';
 
 function unwrapPre(markup: string): string {
@@ -119,8 +120,23 @@ describe('payload replace pipeline', () => {
     ...['1', 'true', 'false', 'null', '[a, b]', '!!int 1'].map((key) =>
       yaml.replace("- ' a ': ' b '", `- ${key}: ' b '`)
     ),
-    `operand: &operand text\n${yaml.replace("- ' a ': ' b '", "- *operand : ' b '")}`,
-    `operand: &operand text\n${yaml.replace("- ' a ': ' b '", "- ' a ': *operand")}`,
+    ...[
+      'operand: &operand 1',
+      'operand: &operand !!int 1',
+      'operand: &operand 1.0',
+      'operand: &operand true',
+      'operand: &operand null',
+      `operand: &operand [a, b]`,
+      `operand: &operand !custom hello`,
+    ].flatMap((anchor) => [
+      `${anchor}\n${yaml.replace("- ' a ': ' b '", "- *operand : ' b '")}`,
+      `${anchor}\n${yaml.replace("- ' a ': ' b '", "- ' a ': *operand")}`,
+    ]),
+    `k: &k 123\n${yaml.replace("- ' a ': ' b '", "- *k : 'foo'\n            replacement: 'bar'")}`,
+    `v: &v 123\n${yaml.replace("- ' a ': ' b '", "- pattern: *v\n            replacement: 'bar'")}`,
+    `v: &v false\n${yaml.replace("- ' a ': ' b '", "- pattern: 'foo'\n            replacement: *v")}`,
+    `k1: &k1 pattern\n${yaml.replace("- ' a ': ' b '", "- *k1 : 'foo'\n            pattern: 'bar'")}`,
+    `k1: &k1 pattern\nk2: &k2 extra\n${yaml.replace("- ' a ': ' b '", "- *k1 : 'foo'\n            *k2 : 'bar'")}`,
     `position: &position 1.0\n${yaml.replace('positions: [1, 2]', 'positions: [*position]')}`,
     yaml.replace("- ' a ': ' b '", "- ' a ': 12"),
     yaml.replace("- ' a ': ' b '", "- ' a ': ' b '\n            extra: entry"),
@@ -316,5 +332,613 @@ ${yaml
         ],
       })
     ).toBe('payload_replace_invalid_models');
+  });
+
+  test('accepts YAML string scalar aliases for literal and regex replacements and preserves references on unrelated edits', () => {
+    const source = `k_from: &k_from " a "
+v_to: &v_to !!str 1
+k_pat: &k_pat pattern
+k_rep: &k_rep replacement
+v_pat: &v_pat '(?i)foo'
+v_rep: &v_rep !!str true
+${yaml.replace(
+  "- ' a ': ' b '",
+  `- *k_from : *v_to
+          - *k_pat : *v_pat
+            *k_rep : *v_rep
+          - *k_pat : 'literal-pattern'`
+)}`;
+    const parsed = parseVisualValuesFromYaml(source).payloadReplaceRules[0];
+    expect(parsed.invalid).toBeUndefined();
+    expect(getPayloadReplaceValidationError(parsed)).toBeUndefined();
+    expect(parsed.replacements.map(({ from, to, regex }) => ({ from, to, regex }))).toEqual([
+      { from: ' a ', to: '1', regex: undefined },
+      { from: '(?i)foo', to: 'true', regex: true },
+      { from: 'pattern', to: 'literal-pattern', regex: undefined },
+      { from: '__proto__', to: '', regex: undefined },
+    ]);
+
+    const output = applyPayloadEdit(source, () => ({ debug: true }));
+    expect(parseYaml(output).observability.logs.debug).toBe(true);
+    expect(output).toContain('*k_from');
+    expect(output).toContain('*v_to');
+    expect(output).toContain('*k_pat');
+    expect(output).toContain('*k_rep');
+    expect(output).toContain('*v_pat');
+    expect(output).toContain('*v_rep');
+    expect(parseYaml(output).requests.payload.replace).toEqual(
+      parseYaml(source).requests.payload.replace
+    );
+  });
+
+  test('preserves unchanged replacement references and node style when editing nearby rules or operands', () => {
+    const source = `k_from: &k_from "from-text"
+v_to: &v_to "to-text"
+k_pat: &k_pat pattern
+k_rep: &k_rep replacement
+v_pat: &v_pat '(?i)foo'
+v_rep: &v_rep '$1'
+requests:
+  payload:
+    replace:
+      - models:
+          - name: 'first-*'
+        target:
+          role: user
+          positions: [1]
+        replacements:
+          - *k_from : ' b '
+          - ' c ': *v_to
+          - *k_pat : *v_pat
+            *k_rep : *v_rep
+      - models:
+          - name: 'second-*'
+        target:
+          role: system
+          all: true
+        replacements:
+          - ' x ': ' y '
+`;
+    // 1. Edit only the second rule -> first rule keeps all aliases untouched
+    const editedRule2 = applyPayloadEdit(source, ({ payloadReplaceRules }) => ({
+      payloadReplaceRules: [
+        payloadReplaceRules[0],
+        {
+          ...payloadReplaceRules[1],
+          replacements: [{ ...payloadReplaceRules[1].replacements[0], to: ' z ' }],
+        },
+      ],
+    }));
+    expect(editedRule2).toContain('*k_from');
+    expect(editedRule2).toContain('*v_to');
+    expect(editedRule2).toContain('*k_pat');
+    expect(editedRule2).toContain('*k_rep');
+    expect(editedRule2).toContain('*v_pat');
+    expect(editedRule2).toContain('*v_rep');
+    expect(parseYaml(editedRule2).requests.payload.replace[1].replacements).toEqual([
+      { ' x ': ' z ' },
+    ]);
+
+    // 2. Edit one operand of an aliased entry -> the unedited operand / regex key aliases stay intact
+    const editedOperands = applyPayloadEdit(source, ({ payloadReplaceRules }) => {
+      const rule0 = payloadReplaceRules[0];
+      return {
+        payloadReplaceRules: [
+          {
+            ...rule0,
+            replacements: [
+              { ...rule0.replacements[0], to: ' edited-b ' },
+              { ...rule0.replacements[1], from: ' edited-c ' },
+              { ...rule0.replacements[2], to: '$2' },
+            ],
+          },
+          payloadReplaceRules[1],
+        ],
+      };
+    });
+    expect(editedOperands).toContain('*k_from');
+    expect(editedOperands).toContain('*v_to');
+    expect(editedOperands).toContain('*k_pat');
+    expect(editedOperands).toContain('*k_rep');
+    expect(editedOperands).toContain('*v_pat');
+    expect(editedOperands).not.toContain('*v_rep');
+    expect(parseYaml(editedOperands).requests.payload.replace[0].replacements).toEqual([
+      { 'from-text': ' edited-b ' },
+      { ' edited-c ': 'to-text' },
+      { pattern: '(?i)foo', replacement: '$2' },
+    ]);
+
+    // 3. Editing the aliased operand itself replaces the alias without mutating the anchor
+    const editedAliasedOperand = applyPayloadEdit(source, ({ payloadReplaceRules }) => {
+      const rule0 = payloadReplaceRules[0];
+      return {
+        payloadReplaceRules: [
+          {
+            ...rule0,
+            replacements: [
+              { ...rule0.replacements[0], from: 'replaced-from' },
+              rule0.replacements[1],
+              rule0.replacements[2],
+            ],
+          },
+          payloadReplaceRules[1],
+        ],
+      };
+    });
+    expect(parseYaml(editedAliasedOperand).k_from).toBe('from-text');
+    expect(parseYaml(editedAliasedOperand).requests.payload.replace[0].replacements[0]).toEqual({
+      'replaced-from': ' b ',
+    });
+    expect(editedAliasedOperand).toContain('*v_to');
+  });
+
+  test('materializes inline anchors inside payload.replace when defining entry is edited or reordered', () => {
+    const source = `requests:
+  payload:
+    replace:
+      - models:
+          - name: '*'
+        target:
+          role: user
+          all: true
+        replacements:
+          - &op 'foo': 'bar'
+          - *op : 'baz'
+`;
+    const reordered = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        { ...rule, replacements: [rule.replacements[1], rule.replacements[0]] },
+      ],
+    }));
+    expect(parseYaml(reordered).requests.payload.replace[0].replacements).toEqual([
+      { foo: 'baz' },
+      { foo: 'bar' },
+    ]);
+
+    const editedAnchor = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [{ ...rule.replacements[0], from: 'qux' }, rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(editedAnchor).requests.payload.replace[0].replacements).toEqual([
+      { qux: 'bar' },
+      { foo: 'baz' },
+    ]);
+  });
+
+  test('rebase retains alias references and detects concurrent changes on aliased rules', () => {
+    const source = `operand: &operand text
+${yaml.replace("- ' a ': ' b '", "- *operand : ' b '")}`;
+    const draft = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [rule.replacements[0], { ...rule.replacements[1], to: 'edited' }],
+        },
+      ],
+    }));
+    const latest = `server: {port: 9000}\n${source}`;
+    let output = '';
+    function Harness() {
+      const config = useVisualConfig();
+      const [phase, setPhase] = useState(0);
+      if (phase === 0) {
+        config.loadVisualValuesFromYaml(source);
+        setPhase(1);
+      } else if (phase === 1) {
+        expect(config.rebaseVisualValuesFromYaml(latest, `server: {port: 9000}\n${draft}`)).toEqual(
+          { ok: true }
+        );
+        setPhase(2);
+      } else {
+        output = config.applyVisualChangesToYaml(latest);
+        expect(() =>
+          config.applyVisualChangesToYaml(
+            latest.replace("- *operand : ' b '", "- *operand : 'concurrent'")
+          )
+        ).toThrow(ConfigDraftConflictError);
+      }
+      return null;
+    }
+    renderToStaticMarkup(createElement(Harness));
+    expect(output).toContain('*operand');
+    expect(parseYaml(output).server.port).toBe(9000);
+    expect(parseYaml(output).requests).toEqual(parseYaml(draft).requests);
+  });
+
+  test('preserves block and quoted scalar styles when editing nearby operands or rules', () => {
+    const source = `requests:
+  payload:
+    replace:
+      - models:
+          - name: '*'
+        target:
+          role: user
+          all: true
+        replacements:
+          - "double": |-
+              line1
+              line2
+          - 'single': "other"
+`;
+    const output = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [
+            { ...rule.replacements[0], from: 'double-edited' },
+            { ...rule.replacements[1], to: 'other-edited' },
+          ],
+        },
+      ],
+    }));
+    expect(output).toContain('"double-edited": |-');
+    expect(output).toContain('\'single\': "other-edited"');
+  });
+
+  test('materializes shadowed same-name anchors by node identity instead of anchor name alone', () => {
+    const source = `requests:
+  payload:
+    replace:
+      - models:
+          - name: '*'
+        target:
+          role: user
+          all: true
+        replacements:
+          - a: &word red
+          - b: &word blue
+          - c: *word
+`;
+    const deletedShadow = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        { ...rule, replacements: [rule.replacements[0], rule.replacements[2]] },
+      ],
+    }));
+    expect(parseYaml(deletedShadow).requests.payload.replace[0].replacements).toEqual([
+      { a: 'red' },
+      { c: 'blue' },
+    ]);
+    expect(deletedShadow).toContain('&word');
+    expect(parseVisualValuesFromYaml(deletedShadow).payloadReplaceRules[0].replacements).toEqual([
+      expect.objectContaining({ from: 'a', to: 'red' }),
+      expect.objectContaining({ from: 'c', to: 'blue' }),
+    ]);
+
+    const editedShadowValue = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [
+            rule.replacements[0],
+            { ...rule.replacements[1], to: 'green' },
+            rule.replacements[2],
+          ],
+        },
+      ],
+    }));
+    expect(parseYaml(editedShadowValue).requests.payload.replace[0].replacements).toEqual([
+      { a: 'red' },
+      { b: 'green' },
+      { c: 'blue' },
+    ]);
+
+    const editedShadowKey = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [
+            rule.replacements[0],
+            { ...rule.replacements[1], from: 'b2' },
+            rule.replacements[2],
+          ],
+        },
+      ],
+    }));
+    expect(editedShadowKey).toContain('*word');
+    expect(parseYaml(editedShadowKey).requests.payload.replace[0].replacements).toEqual([
+      { a: 'red' },
+      { b2: 'blue' },
+      { c: 'blue' },
+    ]);
+
+    const reorderedBeforeShadow = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [rule.replacements[0], rule.replacements[2], rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(reorderedBeforeShadow).requests.payload.replace[0].replacements).toEqual([
+      { a: 'red' },
+      { c: 'blue' },
+      { b: 'blue' },
+    ]);
+
+    const reorderedCrossedShadow = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [rule.replacements[1], rule.replacements[0], rule.replacements[2]],
+        },
+      ],
+    }));
+    expect(parseYaml(reorderedCrossedShadow).requests.payload.replace[0].replacements).toEqual([
+      { b: 'blue' },
+      { a: 'red' },
+      { c: 'blue' },
+    ]);
+
+    const reorderedKeepingBinding = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [rule.replacements[1], rule.replacements[2], rule.replacements[0]],
+        },
+      ],
+    }));
+    expect(reorderedKeepingBinding).toContain('*word');
+    expect(parseYaml(reorderedKeepingBinding).requests.payload.replace[0].replacements).toEqual([
+      { b: 'blue' },
+      { c: 'blue' },
+      { a: 'red' },
+    ]);
+
+    const withEarlierAlias = source.replace(
+      '          - a: &word red\n',
+      '          - a: &word red\n          - keep: *word\n'
+    );
+    const deletedWithEarlierAlias = applyPayloadEdit(
+      withEarlierAlias,
+      ({ payloadReplaceRules: [rule] }) => ({
+        payloadReplaceRules: [
+          {
+            ...rule,
+            replacements: [rule.replacements[0], rule.replacements[1], rule.replacements[3]],
+          },
+        ],
+      })
+    );
+    expect(deletedWithEarlierAlias).toContain('keep: *word');
+    expect(parseYaml(deletedWithEarlierAlias).requests.payload.replace[0].replacements).toEqual([
+      { a: 'red' },
+      { keep: 'red' },
+      { c: 'blue' },
+    ]);
+  });
+
+  test('detaches edited anchored replacement mappings without mutating aliased entries', () => {
+    const source = `requests:
+  payload:
+    replace:
+      - models:
+          - name: '*'
+        target:
+          role: user
+          all: true
+        replacements:
+          - &pair {token: initial}
+          - *pair
+`;
+    const editedValue = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [{ ...rule.replacements[0], to: 'edited' }, rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(editedValue).requests.payload.replace[0].replacements).toEqual([
+      { token: 'edited' },
+      { token: 'initial' },
+    ]);
+    expect(parseVisualValuesFromYaml(editedValue).payloadReplaceRules[0].replacements).toEqual([
+      expect.objectContaining({ from: 'token', to: 'edited' }),
+      expect.objectContaining({ from: 'token', to: 'initial' }),
+    ]);
+
+    const editedKey = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [{ ...rule.replacements[0], from: 'renamed' }, rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(editedKey).requests.payload.replace[0].replacements).toEqual([
+      { renamed: 'initial' },
+      { token: 'initial' },
+    ]);
+
+    const toggledRegex = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [{ ...rule.replacements[0], regex: true }, rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(toggledRegex).requests.payload.replace[0].replacements).toEqual([
+      { pattern: 'token', replacement: 'initial' },
+      { token: 'initial' },
+    ]);
+
+    const editedAlias = applyPayloadEdit(source, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [rule.replacements[0], { ...rule.replacements[1], to: 'edited' }],
+        },
+      ],
+    }));
+    expect(editedAlias).toContain('&pair');
+    expect(parseYaml(editedAlias).requests.payload.replace[0].replacements).toEqual([
+      { token: 'initial' },
+      { token: 'edited' },
+    ]);
+
+    const regexSource = source.replace(
+      '          - &pair {token: initial}\n          - *pair',
+      '          - &rx {pattern: foo, replacement: initial}\n          - *rx'
+    );
+    const editedRegexAnchor = applyPayloadEdit(regexSource, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [{ ...rule.replacements[0], to: 'edited' }, rule.replacements[1]],
+        },
+      ],
+    }));
+    expect(parseYaml(editedRegexAnchor).requests.payload.replace[0].replacements).toEqual([
+      { pattern: 'foo', replacement: 'edited' },
+      { pattern: 'foo', replacement: 'initial' },
+    ]);
+
+    const withExtraEntry = `${source}          - other: plain\n`;
+    const editedNearby = applyPayloadEdit(withExtraEntry, ({ payloadReplaceRules: [rule] }) => ({
+      payloadReplaceRules: [
+        {
+          ...rule,
+          replacements: [
+            rule.replacements[0],
+            rule.replacements[1],
+            { ...rule.replacements[2], to: 'updated' },
+          ],
+        },
+      ],
+    }));
+    expect(editedNearby).toContain('&pair');
+    expect(editedNearby).toContain('*pair');
+    expect(parseYaml(editedNearby).requests.payload.replace[0].replacements).toEqual([
+      { token: 'initial' },
+      { token: 'initial' },
+      { other: 'updated' },
+    ]);
+  });
+
+  test('detaches other changed anchored nodes in payload.replace without mutating aliases', () => {
+    const sharedTargets = `requests:
+  payload:
+    replace:
+      - &rule1
+        models: &mods
+          - &mod1
+            name: '*'
+        target: &tgt
+          role: user
+          all: &all true
+        replacements: &reps
+          - token: initial
+      - models: *mods
+        target: *tgt
+        replacements: *reps
+      - *rule1
+`;
+    const editedRule1Replacement = applyPayloadEdit(sharedTargets, ({ payloadReplaceRules }) => ({
+      payloadReplaceRules: [
+        {
+          ...payloadReplaceRules[0],
+          replacements: [{ ...payloadReplaceRules[0].replacements[0], to: 'edited' }],
+        },
+        payloadReplaceRules[1],
+        payloadReplaceRules[2],
+      ],
+    }));
+    const parsedAfterRepEdit = parseYaml(editedRule1Replacement).requests.payload.replace;
+    expect(parsedAfterRepEdit[0].replacements).toEqual([{ token: 'edited' }]);
+    expect(parsedAfterRepEdit[1].replacements).toEqual([{ token: 'initial' }]);
+    expect(parsedAfterRepEdit[2].replacements).toEqual([{ token: 'initial' }]);
+    expect(parsedAfterRepEdit[1].target).toEqual({ role: 'user', all: true });
+    expect(editedRule1Replacement).toContain('&tgt');
+    expect(editedRule1Replacement).toContain('target: *tgt');
+
+    const editedTargetAndModel = applyPayloadEdit(sharedTargets, ({ payloadReplaceRules }) => ({
+      payloadReplaceRules: [
+        {
+          ...payloadReplaceRules[0],
+          models: [{ ...payloadReplaceRules[0].models[0], name: 'gpt-*' }],
+          target: { role: 'system', all: false, positions: '2' },
+        },
+        payloadReplaceRules[1],
+        payloadReplaceRules[2],
+      ],
+    }));
+    const parsedAfterTargetEdit = parseYaml(editedTargetAndModel).requests.payload.replace;
+    expect(parsedAfterTargetEdit[0].models).toEqual([{ name: 'gpt-*' }]);
+    expect(parsedAfterTargetEdit[0].target).toEqual({
+      role: 'system',
+      all: false,
+      positions: [2],
+    });
+    expect(parsedAfterTargetEdit[1].models).toEqual([{ name: '*' }]);
+    expect(parsedAfterTargetEdit[1].target).toEqual({ role: 'user', all: true });
+    expect(parsedAfterTargetEdit[2].models).toEqual([{ name: '*' }]);
+    expect(parsedAfterTargetEdit[2].target).toEqual({ role: 'user', all: true });
+
+    const pathsSource = `requests:
+  payload:
+    replace:
+      - models:
+          - name: '*'
+        target:
+          paths: &p
+            - a.b
+        replacements:
+          - a: &x initial
+          - &pair {token: *x}
+          - *pair
+      - models:
+          - name: 'gpt-*'
+        target:
+          paths: *p
+        replacements:
+          - k: v
+`;
+    const editedPathsAndNestedAlias = applyPayloadEdit(pathsSource, ({ payloadReplaceRules }) => ({
+      payloadReplaceRules: [
+        {
+          ...payloadReplaceRules[0],
+          target: { role: '', all: false, positions: '', paths: ['a.b', 'c.d'] },
+          replacements: [
+            { ...payloadReplaceRules[0].replacements[1], from: 'edited' },
+            payloadReplaceRules[0].replacements[2],
+          ],
+        },
+        payloadReplaceRules[1],
+      ],
+    }));
+    const parsedPaths = parseYaml(editedPathsAndNestedAlias).requests.payload.replace;
+    expect(parsedPaths[0].target.paths).toEqual(['a.b', 'c.d']);
+    expect(parsedPaths[1].target.paths).toEqual(['a.b']);
+    expect(parsedPaths[0].replacements).toEqual([{ edited: 'initial' }, { token: 'initial' }]);
+  });
+
+  test('preserves anchored filter model names and root alias propagation outside payload.replace', () => {
+    const source = `requests:
+  payload:
+    filter:
+      - models:
+          - name: &model old
+        params:
+          - thinking
+mirror: *model
+`;
+    const output = applyPayloadEdit(source, ({ payloadFilterRules }) => ({
+      payloadFilterRules: [
+        {
+          ...payloadFilterRules[0],
+          models: [{ ...payloadFilterRules[0].models[0], name: 'new' }],
+        },
+      ],
+    }));
+    expect(output).toContain('name: &model');
+    expect(output).toContain('mirror: *model');
+    expect(parseYaml(output).requests.payload.filter[0].models[0].name).toBe('new');
+    expect(parseYaml(output).mirror).toBe('new');
+    expect(parseVisualValuesFromYaml(output).payloadFilterRules[0].models[0].name).toBe('new');
   });
 });

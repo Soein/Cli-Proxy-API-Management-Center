@@ -155,4 +155,22 @@ describe('visual config sensitive replacements', () => {
       { pattern: '(?i)test', replacement: '' },
     ]);
   });
+
+  test('preserves anchored literal replacement values and root alias propagation', () => {
+    const source = `oauth:
+  providers:
+    antigravity:
+      sensitive-words-replace:
+        old: &greeting blue
+mirror: *greeting
+`;
+    const saved = run(source, [{ antigravitySensitiveWordsReplace: { old: 'green' } }]);
+    expect(saved.output).toContain('old: &greeting');
+    expect(saved.output).toContain('mirror: *greeting');
+    expect(parse(saved.output).oauth.providers.antigravity['sensitive-words-replace'].old).toBe(
+      'green'
+    );
+    expect(parse(saved.output).mirror).toBe('green');
+    expect(run(saved.output).values.antigravitySensitiveWordsReplace).toEqual({ old: 'green' });
+  });
 });

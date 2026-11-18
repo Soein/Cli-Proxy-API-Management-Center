@@ -89,16 +89,17 @@ export const getAliasRowIssues = (
   const seen = new Set<string>();
   entries.forEach((entry) => {
     if (isBlankRow(entry)) return;
-    const name = key(entry.name);
-    const alias = key(entry.alias);
-    if (!name || !alias) {
+    const rawName = String(entry.name ?? '').trim();
+    const rawAlias = String(entry.alias ?? '').trim();
+    if (!rawName || !rawAlias) {
       issues[entry.id] = 'incomplete';
       return;
     }
-    if (name === alias) {
+    if (rawName === rawAlias) {
       issues[entry.id] = 'same';
       return;
     }
+    const alias = key(rawAlias);
     if (seen.has(alias)) {
       issues[entry.id] = 'duplicate';
       return;

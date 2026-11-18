@@ -20,7 +20,13 @@ import {
   useModelsStore,
   useThemeStore,
 } from '@/stores';
-import { apiClient, configApi, modelsApi, versionApi } from '@/services/api';
+import {
+  apiClient,
+  configApi,
+  getModelCatalogRefreshFailure,
+  modelsApi,
+  versionApi,
+} from '@/services/api';
 import { useApiKeysForModels } from '@/hooks/useApiKeysForModels';
 import { formatDateTimeValue } from '@/utils/format';
 import { classifyModels } from '@/utils/models';
@@ -146,7 +152,7 @@ export function SystemPage() {
   const fetchModels = async ({
     forceRefresh = false,
     notify = false,
-  }: { forceRefresh?: boolean; notify?: boolean } = {}) => {
+  }: { forceRefresh?: boolean; notify?: boolean } = {}): Promise<boolean> => {
     const requestId = ++modelsRequestId.current;
     const revision = apiClient.getConnectionRevision();
     const isCurrent = () =>
@@ -156,35 +162,37 @@ export function SystemPage() {
         type: 'warning',
         message: t('notification.connection_required'),
       });
-      return;
+      return false;
     }
 
     if (!auth.apiBase) {
       showNotification(t('notification.connection_required'), 'warning');
-      return;
+      return false;
     }
 
     setModelStatus(undefined);
     setModelsRequestLoading(true);
     try {
       const apiKeys = await resolveApiKeysForModels({ force: forceRefresh });
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       const primaryKey = apiKeys[0];
       const list = await fetchModelsFromStore(auth.apiBase, primaryKey, forceRefresh);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       if (notify) {
         showNotification(
           t('system_info.models_refresh_success', { count: list.length }),
           'success'
         );
       }
+      return true;
     } catch (err: unknown) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
       const suffix = message ? `: ${message}` : '';
       const text = `${t('system_info.models_error')}${suffix}`;
       setModelStatus({ type: 'error', message: text });
       if (notify) showNotification(text, 'error');
+      return false;
     } finally {
       if (isCurrent()) setModelsRequestLoading(false);
     }
@@ -200,12 +208,22 @@ export function SystemPage() {
     try {
       await modelsApi.refreshCatalog(isCurrent);
       if (!isCurrent()) return;
-      await fetchModels({ forceRefresh: true });
+      useModelsStore.getState().clearCache();
+      const loaded = await fetchModels({ forceRefresh: true });
       if (!isCurrent()) return;
-      showNotification(t('system_info.models_catalog_refresh_success'), 'success');
+      if (loaded) {
+        showNotification(t('system_info.models_catalog_refresh_success'), 'success');
+      }
     } catch (error: unknown) {
       if (!isCurrent()) return;
-      const message = error instanceof Error ? error.message : '';
+      const { changedProviders } = getModelCatalogRefreshFailure(error);
+      if (changedProviders.length > 0) {
+        useModelsStore.getState().clearCache();
+        await fetchModels({ forceRefresh: true });
+        if (!isCurrent()) return;
+      }
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       showNotification(
         `${t('system_info.models_catalog_refresh_failed')}${message ? `: ${message}` : ''}`,
         'error'

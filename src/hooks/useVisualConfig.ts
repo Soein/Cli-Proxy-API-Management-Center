@@ -1,6 +1,16 @@
 import { useCallback, useMemo, useReducer } from 'react';
-import { isAlias, isMap, isScalar, isSeq, parse as parseYaml, parseDocument } from 'yaml';
-import type { Node, Pair, YAMLMap, YAMLSeq } from 'yaml';
+import {
+  isAlias,
+  isMap,
+  isNode,
+  isScalar,
+  isSeq,
+  Pair,
+  parse as parseYaml,
+  parseDocument,
+  visit,
+} from 'yaml';
+import type { Node, YAMLMap, YAMLSeq } from 'yaml';
 import type {
   DisableImageGenerationMode,
   PluginStoreAuthApplyTo,
@@ -686,20 +696,146 @@ export function getPayloadReplaceValidationError(rule: PayloadReplaceRule): stri
   return undefined;
 }
 
+function resolveYamlNode(doc: YamlDocument, node: unknown): unknown {
+  let current = node;
+  const seen = new Set<unknown>();
+  while (isAlias(current) && !seen.has(current)) {
+    seen.add(current);
+    current = current.resolve(doc);
+  }
+  return current;
+}
+
+function isYamlStringScalar(doc: YamlDocument, node: unknown): boolean {
+  const scalar = resolveYamlNode(doc, node);
+  return (
+    isScalar(scalar) &&
+    typeof scalar.value === 'string' &&
+    (!scalar.tag || scalar.tag === 'tag:yaml.org,2002:str')
+  );
+}
+
+function resolvedMapPair(doc: YamlDocument, map: YAMLMap, key: string): Pair | undefined {
+  return map.items.find((pair) => {
+    const pairKey = resolveYamlNode(doc, pair.key);
+    return isYamlStringScalar(doc, pairKey) && isScalar(pairKey) && pairKey.value === key;
+  });
+}
+
+function deleteResolvedMapValue(doc: YamlDocument, map: YAMLMap, key: string): void {
+  const pair = resolvedMapPair(doc, map, key);
+  if (pair) map.items.splice(map.items.indexOf(pair), 1);
+}
+
+function updateOperandNode(
+  doc: YamlDocument,
+  current: unknown,
+  nextValue: string,
+  detach = false
+): Node {
+  if (isScalar(current) && !current.anchor && !detach) {
+    current.value = nextValue;
+    return current;
+  }
+  const previous = current && typeof current === 'object' ? (current as Node) : undefined;
+  return preserveNodeComments(previous, doc.createNode(nextValue));
+}
+
+function cloneMapShell(map: YAMLMap, stripAnchor: boolean): YAMLMap {
+  const cloned = Object.create(
+    Object.getPrototypeOf(map),
+    Object.getOwnPropertyDescriptors(map)
+  ) as YAMLMap;
+  cloned.items = map.items.map((pair) => new Pair(pair.key, pair.value));
+  if (map.range) cloned.range = map.range.slice() as typeof map.range;
+  if (stripAnchor) delete (cloned as { anchor?: string }).anchor;
+  return cloned;
+}
+
+function cloneSeqShell(seq: YAMLSeq, stripAnchor: boolean): YAMLSeq {
+  const cloned = Object.create(
+    Object.getPrototypeOf(seq),
+    Object.getOwnPropertyDescriptors(seq)
+  ) as YAMLSeq;
+  cloned.items = [...seq.items];
+  if (seq.range) cloned.range = seq.range.slice() as typeof seq.range;
+  if (stripAnchor) delete (cloned as { anchor?: string }).anchor;
+  return cloned;
+}
+
+function copyAliasTargets(source: Node, cloned: Node, priorAliasTargets: Map<Node, unknown>): void {
+  if (priorAliasTargets.size === 0 || (!isMap(source) && !isSeq(source))) return;
+  const sourceAliases: Node[] = [];
+  const clonedAliases: Node[] = [];
+  visit(source, {
+    Alias(_key, aliasNode) {
+      sourceAliases.push(aliasNode);
+    },
+  });
+  visit(cloned, {
+    Alias(_key, aliasNode) {
+      clonedAliases.push(aliasNode);
+    },
+  });
+  sourceAliases.forEach((aliasNode, index) => {
+    const clonedAlias = clonedAliases[index];
+    if (clonedAlias && priorAliasTargets.has(aliasNode)) {
+      priorAliasTargets.set(clonedAlias, priorAliasTargets.get(aliasNode));
+    }
+  });
+}
+
+function materializeDanglingAliases(
+  doc: YamlDocument,
+  priorAliasTargets: Map<Node, unknown>
+): void {
+  if (priorAliasTargets.size === 0) return;
+  const activeAnchors = new Map<string, Node>();
+  const materializedAncestors = new WeakMap<Node, Set<unknown>>();
+  visit(doc, {
+    Node(_key, node, path) {
+      if (!isAlias(node) && node.anchor) {
+        activeAnchors.set(node.anchor, node);
+      }
+      if (isAlias(node) && priorAliasTargets.has(node)) {
+        const target = priorAliasTargets.get(node);
+        if (activeAnchors.get(node.source) !== target) {
+          if (isScalar(target) || isMap(target) || isSeq(target)) {
+            let ancestors: Set<unknown> | undefined;
+            for (let i = path.length - 1; i >= 0; i -= 1) {
+              const parent = path[i];
+              if (isNode(parent)) {
+                ancestors = materializedAncestors.get(parent);
+                if (ancestors) break;
+              }
+            }
+            if (ancestors?.has(target)) return;
+            const cloned = target.clone() as Node;
+            delete (cloned as { anchor?: string }).anchor;
+            copyAliasTargets(target, cloned, priorAliasTargets);
+            const nextAncestors = new Set(ancestors);
+            nextAncestors.add(target);
+            materializedAncestors.set(cloned, nextAncestors);
+            preserveNodeComments(node, cloned);
+            return cloned;
+          }
+        }
+      }
+    },
+  });
+}
+
 // JS object keys and numbers lose YAML source types (e.g. true and 1.0).
 // Match PayloadReplacement.UnmarshalYAML and PayloadReplaceTarget.UnmarshalYAML
 // before accepting the normalized values below.
 function parsePayloadReplaceRules(raw: unknown, document: YamlDocument): PayloadReplaceRule[] {
-  const resolve = (node: unknown): unknown => (isAlias(node) ? node.resolve(document) : node);
+  const resolve = (node: unknown): unknown => resolveYamlNode(document, node);
   const get = (node: unknown, key: string): unknown => {
     const map = resolve(node);
-    return isMap(map) ? resolve(map.get(key, true)) : undefined;
+    return isMap(map) ? resolve(resolvedMapPair(document, map, key)?.value) : undefined;
   };
   const rules = get(get(get(document.contents, 'requests'), 'payload'), 'replace');
-  const isStringOperand = (node: unknown) =>
-    isScalar(node) &&
-    typeof node.value === 'string' &&
-    (!node.tag || node.tag === 'tag:yaml.org,2002:str');
+  const isStringOperand = (node: unknown) => isYamlStringScalar(document, node);
   const isIntegerPosition = (node: unknown) => {
     const scalar = resolve(node);
     if (!isScalar(scalar)) return false;
@@ -767,7 +903,11 @@ function parsePayloadReplaceRules(raw: unknown, document: YamlDocument): Payload
           return true;
         return (
           entry.items.length !== 1 &&
-          !(entry.items.length === 2 && mapPair(entry, 'pattern') && mapPair(entry, 'replacement'))
+          !(
+            entry.items.length === 2 &&
+            resolvedMapPair(document, entry, 'pattern') &&
+            resolvedMapPair(document, entry, 'replacement')
+          )
         );
       })
     )
@@ -789,7 +929,7 @@ function parsePayloadReplaceRules(raw: unknown, document: YamlDocument): Payload
     if (
       paths !== undefined &&
       (!isSeq(pathsNode) ||
-        pathsNode.items.some((node) => !isStringOperand(resolve(node))) ||
+        pathsNode.items.some((node) => !isStringOperand(node)) ||
         (target?.role !== undefined && typeof target.role !== 'string') ||
         Boolean(target?.role) ||
         target?.all === true ||
@@ -955,19 +1095,41 @@ function preserveNodeComments(previous: Node | null | undefined, next: Node): No
   return next;
 }
 
-function updatePairValue(doc: YamlDocument, pair: Pair, value: unknown): void {
+type ScopedYamlWriteOptions = {
+  protectAliases?: boolean;
+  detach?: boolean;
+};
+
+function updatePairValue(
+  doc: YamlDocument,
+  pair: Pair,
+  value: unknown,
+  options: ScopedYamlWriteOptions = {}
+): void {
   if (isScalar(pair.value) && (value === null || typeof value !== 'object')) {
-    pair.value.value = value;
-    return;
+    if (options.detach || (options.protectAliases && pair.value.anchor)) {
+      if (Object.is(pair.value.value, value)) return;
+    } else {
+      pair.value.value = value;
+      return;
+    }
   }
   const previous = pair.value && typeof pair.value === 'object' ? (pair.value as Node) : undefined;
   pair.value = preserveNodeComments(previous, doc.createNode(value));
 }
 
-function setMapValue(doc: YamlDocument, map: YAMLMap, key: string, value: unknown): void {
-  const pair = mapPair(map, key);
+function setMapValue(
+  doc: YamlDocument,
+  map: YAMLMap,
+  key: string,
+  value: unknown,
+  options: ScopedYamlWriteOptions = {}
+): void {
+  const pair = options.protectAliases
+    ? (resolvedMapPair(doc, map, key) ?? mapPair(map, key))
+    : mapPair(map, key);
   if (pair) {
-    updatePairValue(doc, pair, value);
+    updatePairValue(doc, pair, value, options);
   } else {
     map.items.push(doc.createPair(key, value));
   }
@@ -978,8 +1140,13 @@ function deleteMapValue(map: YAMLMap, key: string): void {
   if (pair) map.items.splice(map.items.indexOf(pair), 1);
 }
 
-function ensureMapValue(doc: YamlDocument, map: YAMLMap, key: string): YAMLMap {
-  const pair = mapPair(map, key);
+function ensureMapValue(
+  doc: YamlDocument,
+  map: YAMLMap,
+  key: string,
+  existingPair?: Pair
+): YAMLMap {
+  const pair = existingPair ?? mapPair(map, key);
   if (pair && isMap(pair.value)) return pair.value;
   const next = doc.createNode({});
   if (!isMap(next)) throw new Error('Expected YAML map');
@@ -994,8 +1161,13 @@ function ensureMapValue(doc: YamlDocument, map: YAMLMap, key: string): YAMLMap {
   return next;
 }
 
-function ensureSeqValue(doc: YamlDocument, map: YAMLMap, key: string): YAMLSeq {
-  const pair = mapPair(map, key);
+function ensureSeqValue(
+  doc: YamlDocument,
+  map: YAMLMap,
+  key: string,
+  existingPair?: Pair
+): YAMLSeq {
+  const pair = existingPair ?? mapPair(map, key);
   if (pair && isSeq(pair.value)) return pair.value;
   const next = doc.createNode([]);
   if (!isSeq(next)) throw new Error('Expected YAML sequence');
@@ -1031,15 +1203,55 @@ function syncStringSequence(
   key: string,
   baseline: string[] | undefined,
   desired: string[] | undefined,
-  normalize = (value: string) => value.trim()
+  normalize = (value: string) => value.trim(),
+  options: ScopedYamlWriteOptions = {}
 ): void {
   const values = (desired ?? []).map(normalize).filter(Boolean);
-  if (values.length === 0) {
-    deleteMapValue(map, key);
+  if (!options.protectAliases && !options.detach) {
+    if (values.length === 0) {
+      deleteMapValue(map, key);
+      return;
+    }
+
+    const seq = ensureSeqValue(doc, map, key);
+    const available = (baseline ?? []).map((value, index) => ({ value: normalize(value), index }));
+    const used = new Set<number>();
+    const items = values.map((value) => {
+      const match = available.find((item) => item.value === value && !used.has(item.index));
+      const existing = match ? seq.items[match.index] : undefined;
+      if (match) used.add(match.index);
+      if (isScalar(existing)) {
+        existing.value = value;
+        return existing;
+      }
+      if (isAlias(existing)) return existing;
+      return doc.createNode(value);
+    });
+    replaceSequenceItems(seq, items);
     return;
   }
 
-  const seq = ensureSeqValue(doc, map, key);
+  const existingPair = options.protectAliases
+    ? (resolvedMapPair(doc, map, key) ?? mapPair(map, key))
+    : mapPair(map, key);
+  if (values.length === 0) {
+    if (existingPair) map.items.splice(map.items.indexOf(existingPair), 1);
+    return;
+  }
+
+  let seq: YAMLSeq;
+  let seqProtected = Boolean(options.detach);
+  if (existingPair && isSeq(existingPair.value)) {
+    if (seqProtected || (options.protectAliases && existingPair.value.anchor)) {
+      seqProtected = true;
+      seq = cloneSeqShell(existingPair.value, Boolean(existingPair.value.anchor));
+      existingPair.value = seq;
+    } else {
+      seq = existingPair.value;
+    }
+  } else {
+    seq = ensureSeqValue(doc, map, key, existingPair);
+  }
   const available = (baseline ?? []).map((value, index) => ({ value: normalize(value), index }));
   const used = new Set<number>();
   const items = values.map((value) => {
@@ -1047,7 +1259,12 @@ function syncStringSequence(
     const existing = match ? seq.items[match.index] : undefined;
     if (match) used.add(match.index);
     if (isScalar(existing)) {
-      existing.value = value;
+      if (existing.value !== value) {
+        if (seqProtected || (options.protectAliases && existing.anchor)) {
+          return preserveNodeComments(existing, doc.createNode(value));
+        }
+        existing.value = value;
+      }
       return existing;
     }
     if (isAlias(existing)) return existing;
@@ -1081,11 +1298,14 @@ function syncEntryMap<T extends { id: string }>(
   baseline: T[],
   desired: T[],
   getKey: (entry: T) => string,
-  getValue: (entry: T) => unknown
+  getValue: (entry: T) => unknown,
+  options: ScopedYamlWriteOptions = {}
 ): void {
   const pairsById = new Map<string, Pair>();
   baseline.forEach((entry) => {
-    const pair = mapPair(map, getKey(entry));
+    const pair = options.protectAliases
+      ? (resolvedMapPair(doc, map, getKey(entry)) ?? mapPair(map, getKey(entry)))
+      : mapPair(map, getKey(entry));
     if (pair) pairsById.set(entry.id, pair);
   });
 
@@ -1094,14 +1314,30 @@ function syncEntryMap<T extends { id: string }>(
   const desiredKeys = new Set(entries.map((entry) => getKey(entry).trim()));
   const items = entries.map((entry) => {
     const key = getKey(entry).trim();
-    const pair = pairsById.get(entry.id) ?? doc.createPair(key, getValue(entry));
-    if (isScalar(pair.key)) pair.key.value = key;
-    else pair.key = doc.createNode(key);
-    updatePairValue(doc, pair, getValue(entry));
+    const existingPair = pairsById.get(entry.id);
+    const pair = existingPair
+      ? options.detach
+        ? new Pair(existingPair.key, existingPair.value)
+        : existingPair
+      : doc.createPair(key, getValue(entry));
+    if (isScalar(pair.key)) {
+      if (options.detach || (options.protectAliases && pair.key.anchor)) {
+        if (pair.key.value !== key) pair.key = doc.createNode(key);
+      } else {
+        pair.key.value = key;
+      }
+    } else if (options.protectAliases && isAlias(pair.key)) {
+      const resolvedKey = resolveYamlNode(doc, pair.key);
+      if (!isScalar(resolvedKey) || resolvedKey.value !== key) {
+        pair.key = doc.createNode(key);
+      }
+    } else pair.key = doc.createNode(key);
+    updatePairValue(doc, pair, getValue(entry), options);
     return pair;
   });
   const unmanagedItems = map.items.filter((pair) => {
-    const key = String(isScalar(pair.key) ? pair.key.value : pair.key);
+    const resolvedKey = options.protectAliases ? resolveYamlNode(doc, pair.key) : pair.key;
+    const key = String(isScalar(resolvedKey) ? resolvedKey.value : pair.key);
     return !managedKeys.has(key) && !desiredKeys.has(key);
   });
   replaceMapItems(map, [...items, ...unmanagedItems]);
@@ -1112,55 +1348,148 @@ function syncConditionSequence(
   modelMap: YAMLMap,
   key: string,
   baseline: PayloadParamEntry[] | undefined,
-  desired: PayloadParamEntry[] | undefined
+  desired: PayloadParamEntry[] | undefined,
+  options: ScopedYamlWriteOptions = {}
 ): void {
   // Unedited conditions retain their original grouping and nested value comments.
   if (JSON.stringify(baseline ?? []) === JSON.stringify(desired ?? [])) return;
 
   const entries = (desired ?? []).filter((entry) => entry.path.trim());
-  if (entries.length === 0) {
-    deleteMapValue(modelMap, key);
+  if (!options.protectAliases && !options.detach) {
+    if (entries.length === 0) {
+      deleteMapValue(modelMap, key);
+      return;
+    }
+    const seq = ensureSeqValue(doc, modelMap, key);
+    const flattened: YAMLMap[] = [];
+    seq.items.forEach((node, itemIndex) => {
+      if (isMap(node)) {
+        // Match parsePayloadConditions' Object.entries order, including numeric keys.
+        // Every map field is a condition, not an unknown extension field. The backend
+        // ANDs all fields across all maps, so singleton maps preserve its semantics.
+        Object.keys(node.toJSON()).forEach((path) => {
+          const pair = mapPair(node, path);
+          if (!pair) return;
+          const item = doc.createNode({}) as YAMLMap;
+          item.flow = node.flow;
+          item.items = [pair];
+          if (pair === node.items[0]) {
+            item.commentBefore = itemIndex === 0 ? seq.commentBefore : node.commentBefore;
+            item.spaceBefore = node.spaceBefore;
+          }
+          if (pair === node.items[node.items.length - 1]) item.comment = node.comment;
+          flattened.push(item);
+        });
+      } else if (isScalar(node) && typeof node.value === 'string') {
+        // Keep the parser's compatibility with scalar entries without shifting IDs.
+        const item = doc.createNode({ [node.value]: '' }) as YAMLMap;
+        preserveNodeComments(node, item);
+        if (itemIndex === 0) item.commentBefore = seq.commentBefore;
+        flattened.push(item);
+      }
+    });
+    const nodesById = new Map((baseline ?? []).map((entry, index) => [entry.id, flattened[index]]));
+    const priorById = new Map((baseline ?? []).map((entry) => [entry.id, entry]));
+    const items = entries.map((entry) => {
+      const item = nodesById.get(entry.id) ?? (doc.createNode({}) as YAMLMap);
+      const prior = priorById.get(entry.id);
+      const pair = item.items[0];
+      if (pair) {
+        if (isScalar(pair.key)) pair.key.value = entry.path.trim();
+        else pair.key = doc.createNode(entry.path.trim());
+        if (prior?.value !== entry.value || prior?.valueType !== entry.valueType) {
+          updatePairValue(doc, pair, serializePayloadParamEntryValue(entry));
+        }
+      } else {
+        item.items.push(doc.createPair(entry.path.trim(), serializePayloadParamEntryValue(entry)));
+      }
+      return item;
+    });
+    // These are new singleton wrappers; replaceSequenceItems would discard their
+    // comments because they are not members of the original sequence.
+    seq.items = items;
+    seq.commentBefore = items[0]?.commentBefore;
+    if (items[0]) items[0].commentBefore = undefined;
     return;
   }
-  const seq = ensureSeqValue(doc, modelMap, key);
-  const flattened: YAMLMap[] = [];
+
+  const existingPair = options.protectAliases
+    ? (resolvedMapPair(doc, modelMap, key) ?? mapPair(modelMap, key))
+    : mapPair(modelMap, key);
+  if (entries.length === 0) {
+    if (existingPair) modelMap.items.splice(modelMap.items.indexOf(existingPair), 1);
+    return;
+  }
+  let seq: YAMLSeq;
+  let seqProtected = Boolean(options.detach);
+  if (existingPair && isSeq(existingPair.value)) {
+    if (seqProtected || (options.protectAliases && existingPair.value.anchor)) {
+      seqProtected = true;
+      seq = cloneSeqShell(existingPair.value, Boolean(existingPair.value.anchor));
+      existingPair.value = seq;
+    } else {
+      seq = existingPair.value;
+    }
+  } else {
+    seq = ensureSeqValue(doc, modelMap, key, existingPair);
+  }
+  const flattened: Array<{ map: YAMLMap; protectedNode: boolean }> = [];
   seq.items.forEach((node, itemIndex) => {
     if (isMap(node)) {
+      const nodeProtected = seqProtected || Boolean(options.protectAliases && node.anchor);
       // Match parsePayloadConditions' Object.entries order, including numeric keys.
       // Every map field is a condition, not an unknown extension field. The backend
       // ANDs all fields across all maps, so singleton maps preserve its semantics.
       Object.keys(node.toJSON()).forEach((path) => {
-        const pair = mapPair(node, path);
+        const pair = options.protectAliases
+          ? (resolvedMapPair(doc, node, path) ?? mapPair(node, path))
+          : mapPair(node, path);
         if (!pair) return;
         const item = doc.createNode({}) as YAMLMap;
         item.flow = node.flow;
-        item.items = [pair];
+        item.items = [nodeProtected ? new Pair(pair.key, pair.value) : pair];
         if (pair === node.items[0]) {
           item.commentBefore = itemIndex === 0 ? seq.commentBefore : node.commentBefore;
           item.spaceBefore = node.spaceBefore;
         }
         if (pair === node.items[node.items.length - 1]) item.comment = node.comment;
-        flattened.push(item);
+        flattened.push({ map: item, protectedNode: nodeProtected });
       });
     } else if (isScalar(node) && typeof node.value === 'string') {
       // Keep the parser's compatibility with scalar entries without shifting IDs.
       const item = doc.createNode({ [node.value]: '' }) as YAMLMap;
       preserveNodeComments(node, item);
       if (itemIndex === 0) item.commentBefore = seq.commentBefore;
-      flattened.push(item);
+      flattened.push({ map: item, protectedNode: false });
     }
   });
   const nodesById = new Map((baseline ?? []).map((entry, index) => [entry.id, flattened[index]]));
   const priorById = new Map((baseline ?? []).map((entry) => [entry.id, entry]));
   const items = entries.map((entry) => {
-    const item = nodesById.get(entry.id) ?? (doc.createNode({}) as YAMLMap);
+    const matched = nodesById.get(entry.id);
+    const item = matched?.map ?? (doc.createNode({}) as YAMLMap);
+    const itemProtected = matched?.protectedNode ?? false;
     const prior = priorById.get(entry.id);
     const pair = item.items[0];
     if (pair) {
-      if (isScalar(pair.key)) pair.key.value = entry.path.trim();
-      else pair.key = doc.createNode(entry.path.trim());
+      const nextPath = entry.path.trim();
+      if (isScalar(pair.key)) {
+        if (itemProtected || (options.protectAliases && pair.key.anchor)) {
+          if (pair.key.value !== nextPath) pair.key = doc.createNode(nextPath);
+        } else {
+          pair.key.value = nextPath;
+        }
+      } else if (options.protectAliases && isAlias(pair.key)) {
+        const resolvedKey = resolveYamlNode(doc, pair.key);
+        if (!isScalar(resolvedKey) || resolvedKey.value !== nextPath) {
+          pair.key = doc.createNode(nextPath);
+        }
+      } else pair.key = doc.createNode(nextPath);
       if (prior?.value !== entry.value || prior?.valueType !== entry.valueType) {
-        updatePairValue(doc, pair, serializePayloadParamEntryValue(entry));
+        updatePairValue(doc, pair, serializePayloadParamEntryValue(entry), {
+          protectAliases: options.protectAliases,
+          detach: itemProtected,
+        });
       }
     } else {
       item.items.push(doc.createPair(entry.path.trim(), serializePayloadParamEntryValue(entry)));
@@ -1178,38 +1507,224 @@ function syncPayloadModels(
   doc: YamlDocument,
   ruleMap: YAMLMap,
   baseline: PayloadRule['models'],
-  desired: PayloadRule['models']
+  desired: PayloadRule['models'],
+  options: ScopedYamlWriteOptions = {}
 ): void {
   const models = desired.filter((model) => model.name.trim());
-  const seq = ensureSeqValue(doc, ruleMap, 'models');
+  if (!options.protectAliases && !options.detach) {
+    const seq = ensureSeqValue(doc, ruleMap, 'models');
+    const nodesById = new Map(baseline.map((model, index) => [model.id, seq.items[index]]));
+    const items = models.map((model) => {
+      const existing = nodesById.get(model.id);
+      const modelMap = isMap(existing) ? existing : (doc.createNode({}) as YAMLMap);
+      const prior = baseline.find((candidate) => candidate.id === model.id);
+      setMapValue(doc, modelMap, 'name', model.name.trim());
+      if (model.protocol) setMapValue(doc, modelMap, 'protocol', model.protocol);
+      else deleteMapValue(modelMap, 'protocol');
+      if (model.fromProtocol) setMapValue(doc, modelMap, 'from-protocol', model.fromProtocol);
+      else deleteMapValue(modelMap, 'from-protocol');
+
+      const headers = model.headers?.filter((header) => header.name.trim()) ?? [];
+      if (headers.length) {
+        const headersMap = ensureMapValue(doc, modelMap, 'headers');
+        syncEntryMap(
+          doc,
+          headersMap,
+          prior?.headers ?? [],
+          headers,
+          (header) => header.name,
+          (header) => header.value
+        );
+      } else deleteMapValue(modelMap, 'headers');
+
+      syncConditionSequence(doc, modelMap, 'match', prior?.match, model.match);
+      syncConditionSequence(doc, modelMap, 'not-match', prior?.notMatch, model.notMatch);
+      syncStringSequence(doc, modelMap, 'exist', prior?.exist, model.exist);
+      syncStringSequence(doc, modelMap, 'not-exist', prior?.notExist, model.notExist);
+      return modelMap;
+    });
+    replaceSequenceItems(seq, items);
+    return;
+  }
+
+  const existingModelsPair = options.protectAliases
+    ? (resolvedMapPair(doc, ruleMap, 'models') ?? mapPair(ruleMap, 'models'))
+    : mapPair(ruleMap, 'models');
+  let seq: YAMLSeq;
+  let seqProtected = Boolean(options.detach);
+  if (existingModelsPair && isSeq(existingModelsPair.value)) {
+    if (seqProtected || (options.protectAliases && existingModelsPair.value.anchor)) {
+      seqProtected = true;
+      seq = cloneSeqShell(existingModelsPair.value, Boolean(existingModelsPair.value.anchor));
+      existingModelsPair.value = seq;
+    } else {
+      seq = existingModelsPair.value;
+    }
+  } else {
+    seq = ensureSeqValue(doc, ruleMap, 'models', existingModelsPair);
+  }
   const nodesById = new Map(baseline.map((model, index) => [model.id, seq.items[index]]));
+  const nodeIndices = new Map(baseline.map((model, index) => [model.id, index]));
   const items = models.map((model) => {
     const existing = nodesById.get(model.id);
-    const modelMap = isMap(existing) ? existing : (doc.createNode({}) as YAMLMap);
     const prior = baseline.find((candidate) => candidate.id === model.id);
-    setMapValue(doc, modelMap, 'name', model.name.trim());
-    if (model.protocol) setMapValue(doc, modelMap, 'protocol', model.protocol);
-    else deleteMapValue(modelMap, 'protocol');
-    if (model.fromProtocol) setMapValue(doc, modelMap, 'from-protocol', model.fromProtocol);
-    else deleteMapValue(modelMap, 'from-protocol');
+    if (
+      prior &&
+      existing &&
+      withoutEditorIds(prior) === withoutEditorIds(model) &&
+      model.name === model.name.trim()
+    ) {
+      return existing as Node;
+    }
+    const modelProtected =
+      seqProtected || Boolean(options.protectAliases && isMap(existing) && existing.anchor);
+    const modelMap = isMap(existing)
+      ? modelProtected
+        ? cloneMapShell(existing, Boolean(existing.anchor))
+        : existing
+      : (doc.createNode({}) as YAMLMap);
+    const modelIndex = nodeIndices.get(model.id);
+    if (existing && modelMap !== existing && modelIndex !== undefined) {
+      seq.items[modelIndex] = modelMap;
+    }
+    const childOptions: ScopedYamlWriteOptions = {
+      protectAliases: options.protectAliases,
+      detach: modelProtected,
+    };
+    const trimmedName = model.name.trim();
+    if (
+      !prior ||
+      prior.name !== trimmedName ||
+      !(options.protectAliases
+        ? (resolvedMapPair(doc, modelMap, 'name') ?? mapPair(modelMap, 'name'))
+        : mapPair(modelMap, 'name'))
+    ) {
+      setMapValue(doc, modelMap, 'name', trimmedName, childOptions);
+    }
+    if (model.protocol) {
+      if (
+        prior?.protocol !== model.protocol ||
+        !(options.protectAliases
+          ? (resolvedMapPair(doc, modelMap, 'protocol') ?? mapPair(modelMap, 'protocol'))
+          : mapPair(modelMap, 'protocol'))
+      ) {
+        setMapValue(doc, modelMap, 'protocol', model.protocol, childOptions);
+      }
+    } else if (options.protectAliases) {
+      deleteResolvedMapValue(doc, modelMap, 'protocol');
+    } else {
+      deleteMapValue(modelMap, 'protocol');
+    }
+    if (model.fromProtocol) {
+      if (
+        prior?.fromProtocol !== model.fromProtocol ||
+        !(options.protectAliases
+          ? (resolvedMapPair(doc, modelMap, 'from-protocol') ?? mapPair(modelMap, 'from-protocol'))
+          : mapPair(modelMap, 'from-protocol'))
+      ) {
+        setMapValue(doc, modelMap, 'from-protocol', model.fromProtocol, childOptions);
+      }
+    } else if (options.protectAliases) {
+      deleteResolvedMapValue(doc, modelMap, 'from-protocol');
+    } else {
+      deleteMapValue(modelMap, 'from-protocol');
+    }
 
     const headers = model.headers?.filter((header) => header.name.trim()) ?? [];
     if (headers.length) {
-      const headersMap = ensureMapValue(doc, modelMap, 'headers');
-      syncEntryMap(
-        doc,
-        headersMap,
-        prior?.headers ?? [],
-        headers,
-        (header) => header.name,
-        (header) => header.value
-      );
-    } else deleteMapValue(modelMap, 'headers');
+      const existingHeadersPair = options.protectAliases
+        ? (resolvedMapPair(doc, modelMap, 'headers') ?? mapPair(modelMap, 'headers'))
+        : mapPair(modelMap, 'headers');
+      if (
+        JSON.stringify(prior?.headers ?? []) !== JSON.stringify(headers) ||
+        !existingHeadersPair ||
+        !isMap(resolveYamlNode(doc, existingHeadersPair.value))
+      ) {
+        let headersMap: YAMLMap;
+        let headersProtected = modelProtected;
+        if (existingHeadersPair && isMap(existingHeadersPair.value)) {
+          if (modelProtected || (options.protectAliases && existingHeadersPair.value.anchor)) {
+            headersProtected = true;
+            headersMap = cloneMapShell(
+              existingHeadersPair.value,
+              Boolean(existingHeadersPair.value.anchor)
+            );
+            existingHeadersPair.value = headersMap;
+          } else {
+            headersMap = existingHeadersPair.value;
+          }
+        } else {
+          headersMap = ensureMapValue(doc, modelMap, 'headers', existingHeadersPair);
+        }
+        syncEntryMap(
+          doc,
+          headersMap,
+          prior?.headers ?? [],
+          headers,
+          (header) => header.name,
+          (header) => header.value,
+          { protectAliases: options.protectAliases, detach: headersProtected }
+        );
+      }
+    } else if (options.protectAliases) {
+      deleteResolvedMapValue(doc, modelMap, 'headers');
+    } else {
+      deleteMapValue(modelMap, 'headers');
+    }
 
-    syncConditionSequence(doc, modelMap, 'match', prior?.match, model.match);
-    syncConditionSequence(doc, modelMap, 'not-match', prior?.notMatch, model.notMatch);
-    syncStringSequence(doc, modelMap, 'exist', prior?.exist, model.exist);
-    syncStringSequence(doc, modelMap, 'not-exist', prior?.notExist, model.notExist);
+    syncConditionSequence(doc, modelMap, 'match', prior?.match, model.match, childOptions);
+    syncConditionSequence(
+      doc,
+      modelMap,
+      'not-match',
+      prior?.notMatch,
+      model.notMatch,
+      childOptions
+    );
+    if (
+      JSON.stringify(prior?.exist ?? []) !== JSON.stringify(model.exist ?? []) ||
+      (Boolean(model.exist?.length) &&
+        !isSeq(
+          resolveYamlNode(
+            doc,
+            (options.protectAliases
+              ? (resolvedMapPair(doc, modelMap, 'exist') ?? mapPair(modelMap, 'exist'))
+              : mapPair(modelMap, 'exist'))?.value
+          )
+        ))
+    ) {
+      syncStringSequence(
+        doc,
+        modelMap,
+        'exist',
+        prior?.exist,
+        model.exist,
+        undefined,
+        childOptions
+      );
+    }
+    if (
+      JSON.stringify(prior?.notExist ?? []) !== JSON.stringify(model.notExist ?? []) ||
+      (Boolean(model.notExist?.length) &&
+        !isSeq(
+          resolveYamlNode(
+            doc,
+            (options.protectAliases
+              ? (resolvedMapPair(doc, modelMap, 'not-exist') ?? mapPair(modelMap, 'not-exist'))
+              : mapPair(modelMap, 'not-exist'))?.value
+          )
+        ))
+    ) {
+      syncStringSequence(
+        doc,
+        modelMap,
+        'not-exist',
+        prior?.notExist,
+        model.notExist,
+        undefined,
+        childOptions
+      );
+    }
     return modelMap;
   });
   replaceSequenceItems(seq, items);
@@ -1258,66 +1773,267 @@ function syncPayloadReplaceSequence(
 ): void {
   const payload = doc.getIn(['requests', 'payload'], true);
   if (!isMap(payload)) throw new Error('Expected payload map');
+  const priorAliasTargets = new Map<Node, unknown>();
+  visit(doc, {
+    Alias(_key, aliasNode) {
+      priorAliasTargets.set(aliasNode, resolveYamlNode(doc, aliasNode));
+    },
+  });
   if (!desired.length) {
-    deleteMapValue(payload, 'replace');
+    deleteResolvedMapValue(doc, payload, 'replace');
+    materializeDanglingAliases(doc, priorAliasTargets);
     return;
   }
-  const seq = ensureSeqValue(doc, payload, 'replace');
+  const replaceChanged =
+    baseline.length !== desired.length ||
+    desired.some((rule, index) => withoutEditorIds(rule) !== withoutEditorIds(baseline[index]));
+  const replacePair = resolvedMapPair(doc, payload, 'replace');
+  let seq: YAMLSeq;
+  let seqProtected = false;
+  if (replacePair && isSeq(replacePair.value)) {
+    if (replaceChanged && replacePair.value.anchor) {
+      seqProtected = true;
+      seq = cloneSeqShell(replacePair.value, true);
+      replacePair.value = seq;
+    } else {
+      seq = replacePair.value;
+    }
+  } else {
+    seq = ensureSeqValue(doc, payload, 'replace', replacePair);
+  }
   const nodes = new Map(baseline.map((rule, index) => [rule.id, seq.items[index]]));
+  const nodeIndices = new Map(baseline.map((rule, index) => [rule.id, index]));
   replaceSequenceItems(
     seq,
     desired.map((rule) => {
       const existing = nodes.get(rule.id);
-      const node = isMap(existing) ? existing : (doc.createNode({}) as YAMLMap);
       const prior = baseline.find((entry) => entry.id === rule.id);
-      syncPayloadModels(doc, node, prior?.models ?? [], rule.models);
-      const target = ensureMapValue(doc, node, 'target');
-      const { paths, role, all, positions } = rule.target;
-      if (paths !== undefined) {
-        for (const key of ['role', 'all', 'positions']) deleteMapValue(target, key);
-        if (
-          !mapPair(target, 'paths') ||
-          JSON.stringify(prior?.target.paths) !== JSON.stringify(paths)
-        ) {
-          syncStringSequence(doc, target, 'paths', prior?.target.paths, paths, (path) => path);
+      if (prior && existing && withoutEditorIds(prior) === withoutEditorIds(rule)) {
+        return existing as Node;
+      }
+      const ruleProtected = seqProtected || (isMap(existing) && Boolean(existing.anchor));
+      const node = isMap(existing)
+        ? seqProtected || existing.anchor
+          ? cloneMapShell(existing, Boolean(existing.anchor))
+          : existing
+        : (doc.createNode({}) as YAMLMap);
+      const ruleIndex = nodeIndices.get(rule.id);
+      if (existing && node !== existing && ruleIndex !== undefined) {
+        seq.items[ruleIndex] = node;
+      }
+      if (!(
+        prior &&
+        withoutEditorIds(prior.models) === withoutEditorIds(rule.models) &&
+        resolvedMapPair(doc, node, 'models')
+      )) {
+        syncPayloadModels(doc, node, prior?.models ?? [], rule.models, {
+          protectAliases: true,
+          detach: ruleProtected,
+        });
+      }
+      const existingTargetPair = resolvedMapPair(doc, node, 'target');
+      if (!(
+        prior &&
+        JSON.stringify(prior.target) === JSON.stringify(rule.target) &&
+        existingTargetPair &&
+        isMap(resolveYamlNode(doc, existingTargetPair.value))
+      )) {
+        const targetWasAnchored = Boolean(
+          existingTargetPair && isMap(existingTargetPair.value) && existingTargetPair.value.anchor
+        );
+        const targetProtected = ruleProtected || targetWasAnchored;
+        if (existingTargetPair && !isMap(existingTargetPair.value)) {
+          existingTargetPair.value = preserveNodeComments(
+            existingTargetPair.value && typeof existingTargetPair.value === 'object'
+              ? (existingTargetPair.value as Node)
+              : undefined,
+            doc.createNode({})
+          );
+        } else if (existingTargetPair && isMap(existingTargetPair.value) && targetProtected) {
+          existingTargetPair.value = cloneMapShell(existingTargetPair.value, targetWasAnchored);
         }
-      } else {
-        deleteMapValue(target, 'paths');
-        setMapValue(doc, target, 'role', role);
-        setMapValue(doc, target, 'all', all);
-        if (all) deleteMapValue(target, 'positions');
-        else if (prior?.target.positions !== positions || !mapPair(target, 'positions')) {
-          setMapValue(doc, target, 'positions', positions.split(',').map(Number));
+        const target =
+          existingTargetPair && isMap(existingTargetPair.value)
+            ? existingTargetPair.value
+            : ensureMapValue(doc, node, 'target', existingTargetPair);
+        const { paths, role, all, positions } = rule.target;
+        if (paths !== undefined) {
+          for (const key of ['role', 'all', 'positions']) deleteResolvedMapValue(doc, target, key);
+          if (
+            !resolvedMapPair(doc, target, 'paths') ||
+            JSON.stringify(prior?.target.paths) !== JSON.stringify(paths)
+          ) {
+            syncStringSequence(
+              doc,
+              target,
+              'paths',
+              prior?.target.paths,
+              paths,
+              (path) => path,
+              { protectAliases: true, detach: targetProtected }
+            );
+          }
+        } else {
+          deleteResolvedMapValue(doc, target, 'paths');
+          const rolePair = resolvedMapPair(doc, target, 'role');
+          if (
+            !prior ||
+            prior.target.paths !== undefined ||
+            prior.target.role !== role ||
+            !rolePair
+          ) {
+            if (rolePair)
+              rolePair.value = updateOperandNode(doc, rolePair.value, role, targetProtected);
+            else target.items.push(doc.createPair('role', role));
+          }
+          const allPair = resolvedMapPair(doc, target, 'all');
+          if (!prior || prior.target.paths !== undefined || prior.target.all !== all || !allPair) {
+            if (allPair) {
+              updatePairValue(doc, allPair, all, {
+                protectAliases: true,
+                detach: targetProtected,
+              });
+            } else target.items.push(doc.createPair('all', all));
+          }
+          if (all) deleteResolvedMapValue(doc, target, 'positions');
+          else if (
+            !prior ||
+            prior.target.paths !== undefined ||
+            prior.target.all ||
+            prior.target.positions !== positions ||
+            !resolvedMapPair(doc, target, 'positions')
+          ) {
+            const positionsPair = resolvedMapPair(doc, target, 'positions');
+            const nextPositions = positions.split(',').map(Number);
+            if (positionsPair) {
+              updatePairValue(doc, positionsPair, nextPositions, {
+                protectAliases: true,
+                detach: targetProtected,
+              });
+            } else target.items.push(doc.createPair('positions', nextPositions));
+          }
         }
       }
-      const replacements = ensureSeqValue(doc, node, 'replacements');
-      const entryNodes = new Map(
-        (prior?.replacements ?? []).map((entry, index) => [entry.id, replacements.items[index]])
-      );
-      replaceSequenceItems(
-        replacements,
-        rule.replacements.map((entry) => {
-          const existing = entryNodes.get(entry.id);
-          const map = isMap(existing) ? existing : (doc.createNode({}) as YAMLMap);
-          if (entry.regex) {
-            if (map.items.length !== 2) map.items = [];
-            setMapValue(doc, map, 'pattern', entry.from);
-            setMapValue(doc, map, 'replacement', entry.to);
+      const existingReplacementsPair = resolvedMapPair(doc, node, 'replacements');
+      if (!(
+        prior &&
+        withoutEditorIds(prior.replacements) === withoutEditorIds(rule.replacements) &&
+        existingReplacementsPair &&
+        isSeq(resolveYamlNode(doc, existingReplacementsPair.value))
+      )) {
+        const replacementsWasAnchored = Boolean(
+          existingReplacementsPair &&
+          isSeq(existingReplacementsPair.value) &&
+          existingReplacementsPair.value.anchor
+        );
+        const replacementsProtected = ruleProtected || replacementsWasAnchored;
+        if (existingReplacementsPair && !isSeq(existingReplacementsPair.value)) {
+          existingReplacementsPair.value = preserveNodeComments(
+            existingReplacementsPair.value && typeof existingReplacementsPair.value === 'object'
+              ? (existingReplacementsPair.value as Node)
+              : undefined,
+            doc.createNode([])
+          );
+        } else if (
+          existingReplacementsPair &&
+          isSeq(existingReplacementsPair.value) &&
+          replacementsProtected
+        ) {
+          existingReplacementsPair.value = cloneSeqShell(
+            existingReplacementsPair.value,
+            replacementsWasAnchored
+          );
+        }
+        const replacements =
+          existingReplacementsPair && isSeq(existingReplacementsPair.value)
+            ? existingReplacementsPair.value
+            : ensureSeqValue(doc, node, 'replacements', existingReplacementsPair);
+        const entryNodes = new Map(
+          (prior?.replacements ?? []).map((entry, index) => [entry.id, replacements.items[index]])
+        );
+        const entryIndices = new Map(
+          (prior?.replacements ?? []).map((entry, index) => [entry.id, index])
+        );
+        const priorEntries = new Map((prior?.replacements ?? []).map((entry) => [entry.id, entry]));
+        replaceSequenceItems(
+          replacements,
+          rule.replacements.map((entry) => {
+            const existingEntry = entryNodes.get(entry.id);
+            const priorEntry = priorEntries.get(entry.id);
+            if (
+              priorEntry &&
+              existingEntry &&
+              Boolean(priorEntry.regex) === Boolean(entry.regex) &&
+              priorEntry.from === entry.from &&
+              priorEntry.to === entry.to
+            ) {
+              return existingEntry as Node;
+            }
+            const entryProtected =
+              replacementsProtected || (isMap(existingEntry) && Boolean(existingEntry.anchor));
+            const map = isMap(existingEntry)
+              ? replacementsProtected || existingEntry.anchor
+                ? cloneMapShell(existingEntry, Boolean(existingEntry.anchor))
+                : existingEntry
+              : (doc.createNode({}) as YAMLMap);
+            const entryIndex = entryIndices.get(entry.id);
+            if (existingEntry && map !== existingEntry && entryIndex !== undefined) {
+              replacements.items[entryIndex] = map;
+            }
+            if (entry.regex) {
+              if (priorEntry?.regex && map.items.length === 2) {
+                const patternPair = resolvedMapPair(doc, map, 'pattern');
+                const replacementPair = resolvedMapPair(doc, map, 'replacement');
+                if (patternPair && replacementPair) {
+                  if (priorEntry.from !== entry.from) {
+                    patternPair.value = updateOperandNode(
+                      doc,
+                      patternPair.value,
+                      entry.from,
+                      entryProtected
+                    );
+                  }
+                  if (priorEntry.to !== entry.to) {
+                    replacementPair.value = updateOperandNode(
+                      doc,
+                      replacementPair.value,
+                      entry.to,
+                      entryProtected
+                    );
+                  }
+                  return map;
+                }
+              }
+              map.items = [];
+              setMapValue(doc, map, 'pattern', entry.from, {
+                protectAliases: true,
+                detach: entryProtected,
+              });
+              setMapValue(doc, map, 'replacement', entry.to, {
+                protectAliases: true,
+                detach: entryProtected,
+              });
+              return map;
+            }
+            if (priorEntry && !priorEntry.regex && map.items.length === 1) {
+              const pair = map.items[0];
+              if (priorEntry.from !== entry.from) {
+                pair.key = updateOperandNode(doc, pair.key, entry.from, entryProtected);
+              }
+              if (priorEntry.to !== entry.to) {
+                pair.value = updateOperandNode(doc, pair.value, entry.to, entryProtected);
+              }
+              return map;
+            }
+            map.items = [doc.createPair(entry.from, entry.to)];
             return map;
-          }
-          const pair = map.items[0];
-          if (pair) {
-            if (isScalar(pair.key)) pair.key.value = entry.from;
-            else pair.key = doc.createNode(entry.from);
-            updatePairValue(doc, pair, entry.to);
-            map.items = [pair];
-          } else map.items.push(doc.createPair(entry.from, entry.to));
-          return map;
-        })
-      );
+          })
+        );
+      }
       return node;
     })
   );
+  materializeDanglingAliases(doc, priorAliasTargets);
 }
 
 function syncPayloadFilterSequence(
